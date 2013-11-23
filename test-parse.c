@@ -18,10 +18,50 @@ BYTE get_dec_from_hex(const BYTE c)
         return -1;
 }
 
+
+int get_port(
+    const char* rule_str,
+    const int rule_len,
+    struct rule* rule) 
+{
+    int index = 0, port = 0, expt = 1;
+    const char delimiter = '&';
+
+    while (rule_str[index] != '\0' && rule_str[index] != delimiter && rule_str[index] != ' ') {
+        if (rule_str[index] < 48 || rule_str[index] > 57) {
+            goto error;
+        }
+        index++;
+    }
+
+    if (index == 0) {
+        goto error;
+    }
+
+    while (index > 0) {
+        index--;
+        port += (rule_str[index] - 48) * expt;
+        expt *= 10;
+    }
+
+    if (rule->fld == fld_SRC) {
+        rule->net.src = port;
+    }
+    else {
+        rule->net.dest = port;
+    }
+
+return 0;
+
+error:
+    return -1;    
+}
+
+
 int get_mac_address(
     const char* rule_str, 
     const int rule_len,
-    struct _rule* rule) 
+    struct rule* rule) 
 {
     int byte_index = 0, index = 0, num_dec_1, num_dec_2;
     const char delimiter = ':';
@@ -69,7 +109,7 @@ error:
 int get_ip_address(
     const char* rule_str,
     const int rule_len,
-    struct _rule* rule) 
+    struct rule* rule) 
 {
     int byte_index = 0, index = 0, num_dec_1, num_dec_2, num_dec_3;
     const char delimiter = '.';
@@ -116,26 +156,25 @@ error:
     return -1;
 }
 
-
 int create_rule(
     const char* rule_str,
-    const int rule_size) 
+    const int rule_size,
+    struct rule* new_rule) 
 {
     const char* temp_rule_str = rule_str;
     int temp_rule_len = rule_size;
     const char comma = ',', colon = ':';
-    struct _rule* new_rule = (struct _rule*)malloc(sizeof(struct _rule));
-
+    
     if (new_rule == NULL) {
         goto error;
     }
     //
     // parse the action DROP/ALLOW
     //
-    if (temp_rule_len > lstr_DROP && strncmp(temp_rule_str, str_DROP, lstr_DROP) == 0) {
+    if (temp_rule_len > lstr_DROP && strncasecmp(temp_rule_str, str_DROP, lstr_DROP) == 0) {
         new_rule->action = act_DROP; temp_rule_str += lstr_DROP; temp_rule_len -= lstr_DROP;
     }
-    else if (temp_rule_len > lstr_ALLOW && strncmp(temp_rule_str, str_ALLOW, lstr_ALLOW) == 0) {
+    else if (temp_rule_len > lstr_ALLOW && strncasecmp(temp_rule_str, str_ALLOW, lstr_ALLOW) == 0) {
         new_rule->action = act_ALLOW; temp_rule_str += lstr_ALLOW; temp_rule_len -= lstr_ALLOW;
     }
     else {
@@ -144,13 +183,13 @@ int create_rule(
     //
     // parse the direction IN/OUT
     //
-    if (temp_rule_len > lstr_IN && strncmp(temp_rule_str, str_IN, lstr_IN) == 0) {
+    if (temp_rule_len > lstr_IN && strncasecmp(temp_rule_str, str_IN, lstr_IN) == 0) {
         new_rule->dir = dir_IN; temp_rule_str += lstr_IN; temp_rule_len -= lstr_IN;
     }
-    else if (temp_rule_len > lstr_OUT && strncmp(temp_rule_str, str_OUT, lstr_OUT) == 0) {
+    else if (temp_rule_len > lstr_OUT && strncasecmp(temp_rule_str, str_OUT, lstr_OUT) == 0) {
         new_rule->dir = dir_OUT; temp_rule_str += lstr_OUT; temp_rule_len -= lstr_OUT;
     }
-    else if (temp_rule_len > lstr_INOUT && strncmp(temp_rule_str, str_INOUT, lstr_INOUT) == 0) {
+    else if (temp_rule_len > lstr_INOUT && strncasecmp(temp_rule_str, str_INOUT, lstr_INOUT) == 0) {
         new_rule->dir = dir_INOUT; temp_rule_str += lstr_INOUT; temp_rule_len -= lstr_OUT;
     }
     else {
@@ -159,11 +198,11 @@ int create_rule(
     //
     // parse the field SRC/DEST
     //
-    if (strncmp(temp_rule_str, str_SRC, lstr_SRC) == 0) {
-        new_rule->fld; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
-    }
-    else if (strncmp(temp_rule_str, str_DEST, lstr_DEST) == 0) {
+    if (strncasecmp(temp_rule_str, str_SRC, lstr_SRC) == 0) {
         new_rule->fld = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
+    }
+    else if (strncasecmp(temp_rule_str, str_DEST, lstr_DEST) == 0) {
+        new_rule->fld = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
     }
     else {
         goto error;
@@ -171,24 +210,24 @@ int create_rule(
     //
     // parse the layer MAC/IP/TCP
     //
-    if (temp_rule_len > lstr_MAC && strncmp(temp_rule_str, str_MAC, lstr_MAC) == 0) {
+    if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0) {
         new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
         if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0)
             goto error; 
     }
-    else if (temp_rule_len > lstr_IP && strncmp(temp_rule_str, str_IP, lstr_IP) == 0) {
+    else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
         new_rule->type = type_IP; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
         if (get_ip_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error;
         }
     }
-    else if (temp_rule_len > lstr_TCP && strncmp(temp_rule_str, str_TCP, lstr_TCP) == 0) {
+    else if (temp_rule_len > lstr_TCP && strncasecmp(temp_rule_str, str_TCP, lstr_TCP) == 0) {
         new_rule->type = type_TCP; temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
         if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error;
         }
     }
-    else if (temp_rule_len > lstr_UDP && strncmp(temp_rule_str, str_UDP, lstr_UDP) == 0) {
+    else if (temp_rule_len > lstr_UDP && strncasecmp(temp_rule_str, str_UDP, lstr_UDP) == 0) {
         new_rule->type = type_UDP; temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
         if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error;
@@ -203,27 +242,63 @@ error:
     return -1;
 }
 
+void print_rule(struct rule* rule) 
+{
+    printf("Type: %x\n", rule->type & 0xFF);
+    printf("Action: %x\n", rule->action & 0xFF);
+    printf("Field: %x\n", rule->fld & 0xFF);
+    printf("Direction: %x\n", rule->dir & 0xFF);
+    printf("Bytes 00-03: %x %x %x %x\n", rule->eth.src[0], rule->eth.src[1], rule->eth.src[2], rule->eth.src[3]);
+    printf("Bytes 04-07: %x %x %x %x\n", rule->eth.src[4], rule->eth.src[5], rule->eth.dest[0], rule->eth.dest[1]);
+    printf("Bytes 08-11: %x %x %x %x\n", rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
+}
+
 int parse_filter_rules(const char* filter) 
 {
     const char *current_rule;
     int current_size = 0, size, index = 0;
-    const char delimiter = '|';
+    const char delimiter = '&';
+    struct rule* rule;
+    //
+    // Trim starting spaces
+    //
+    while (filter[index] == ' ') {
+        index++;
+    }
 
     size = strlen(filter);
-    current_rule = filter;
+    current_rule = &filter[index];
 
     while (index <= size) {
+        
         if (filter[index] == delimiter || filter[index] == '\0') {
+            //
+            // Encountered a delimiter or end of string
+            // All characters from current_rule to here are part of a rule
+            //
+            rule = (struct rule*)malloc(sizeof(struct rule));
+            memset(rule, 0, sizeof(struct rule));
             current_size = &filter[index] - current_rule;
-            if (0 != create_rule(current_rule, current_size)) {
+            if (0 != create_rule(current_rule, current_size, rule)) {
+                print_rule(rule);
                 return -1;
             }
 
-            if (index != size) {
-                current_rule = &filter[index + 1];
-            }
+            print_rule(rule);
+
+            index++;
+            while (filter[index] == ' ' && index < size) {
+                index++;
+            }       
+            current_rule = &filter[index];
         }
-        index++;
+        else {
+            //
+            // Just increment and move on to the next character
+            //
+            index++;    
+        }
+        
     }
     return 0;
 }

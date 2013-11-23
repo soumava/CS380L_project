@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/netdevice.h>
+#include <linux/slab.h>
 #include "lkm.h"
 
 MODULE_LICENSE("GPL");
@@ -9,8 +10,8 @@ MODULE_LICENSE("GPL");
 struct nf_hook_ops nf_incoming_hook;
 struct nf_hook_ops nf_outgoing_hook;
 char *filter;
-struct _rule* rules_in;
-struct _rule* rules_out;
+struct rule* rules_in;
+struct rule* rules_out;
 
 module_param(filter, charp, 0);
 
@@ -54,24 +55,63 @@ BYTE get_dec_from_hex(const BYTE c)
         return -1;
 }
 
+
+int get_port(
+    const char* rule_str,
+    const int rule_len,
+    struct rule* rule) 
+{
+    int index = 0, port = 0, expt = 1;
+    const char delimiter = '|';
+
+    while (rule_str[index] != '\0' && rule_str[index] != delimiter) {
+        if (rule_str[index] < 48 || rule_str[index] > 57) {
+            goto error;
+        }
+        index++;
+    }
+
+    if (index == 0) {
+        goto error;
+    }
+
+    while (index > 0) {
+        index--;
+        port += rule_str[index] * expt;
+        expt *= 10;
+    }
+
+    if (rule->fld == fld_SRC) {
+        rule->net.src = port;
+    }
+    else {
+        rule->net.dest = port;
+    }
+
+return 0;
+
+error:
+    return -1;    
+}
+
+
 int get_mac_address(
     const char* rule_str, 
     const int rule_len,
-    struct _rule* rule) 
+    struct rule* rule) 
 {
     int byte_index = 0, index = 0, num_dec_1, num_dec_2;
-    const int num_bytes = 6;
     const char delimiter = ':';
-    unsigned char mac_address[num_bytes];
+    unsigned char mac_address[eth_num_bytes];
     //
     // Check that the size of the string left is larger than the MAC address
     // in AA:BB:CC:DD:EE:FF notation
     //
-    if (rule_len < (num_bytes * 3 - 1)) {
+    if (rule_len < (eth_num_bytes * 3 - 1)) {
         goto error;
     }
     
-    while(byte_index < num_bytes) {
+    while(byte_index < eth_num_bytes) {
         //
         // In case of later bytes, the first character should be a ':'
         //
@@ -91,10 +131,10 @@ int get_mac_address(
     }
 
     if (rule->fld == fld_SRC) {
-        memcpy(rule->eth.src, mac_address, num_bytes);
+        memcpy(rule->eth.src, mac_address, eth_num_bytes);
     }
     else {
-        memcpy(rule->eth.dst, mac_address, num_bytes);
+        memcpy(rule->eth.dest, mac_address, eth_num_bytes);
     }
 
     return 0;
@@ -106,21 +146,20 @@ error:
 int get_ip_address(
     const char* rule_str,
     const int rule_len,
-    struct _rule* rule) 
+    struct rule* rule) 
 {
     int byte_index = 0, index = 0, num_dec_1, num_dec_2, num_dec_3;
-    const int num_bytes = 4;
     const char delimiter = '.';
     unsigned char ip_address[4];
     //
     // Check if the total length of the string is larger than an IP
     // address 
     //
-    if (rule_len < (num_bytes * 4 - 1)) {
+    if (rule_len < (ip_num_bytes * 4 - 1)) {
         goto error;
     }
 
-    while (byte_index < num_bytes) {
+    while (byte_index < ip_num_bytes) {
         //
         // In case of later bytes, the first character should be a '.'
         //
@@ -142,16 +181,83 @@ int get_ip_address(
     }
 
     if (rule->fld == fld_SRC) {
-        memcpy(rule->ip.src, ip_address, num_bytes);
+        memcpy(rule->ip.src, ip_address, ip_num_bytes);
     }
     else {
-        memcpy(rule->ip.dst, ip_address, num_bytes);
+        memcpy(rule->ip.dest, ip_address, ip_num_bytes);
     }
 
     return 0;
 
 error:
     return -1;
+}
+
+#ifdef DBG
+void print_rule(struct rule* rule) 
+{
+    printk(KERN_INFO "Type: %x\n", rule->type & 0xFF);
+    printk(KERN_INFO "Action: %x\n", rule->action & 0xFF);
+    printk(KERN_INFO "Field: %x\n", rule->fld & 0xFF);
+    printk(KERN_INFO "Direction: %x\n", rule->dir & 0xFF);
+    printk(KERN_INFO "Bytes 00-03: %x %x %x %x\n", rule->eth.src[0], rule->eth.src[1], rule->eth.src[2], rule->eth.src[3]);
+    printk(KERN_INFO "Bytes 04-07: %x %x %x %x\n", rule->eth.src[4], rule->eth.src[5], rule->eth.dest[0], rule->eth.dest[1]);
+    printk(KERN_INFO "Bytes 08-11: %x %x %x %x\n", rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
+}
+#endif
+
+void add_rule_to_given_list(
+    struct rule** list,
+    struct rule* rule) 
+{
+    if (*list == NULL) {
+        //
+        // This is the first rule in this linked list
+        //
+        *list = rule;
+    }
+    else {
+        //
+        // Just add it on as the first rule in the list
+        //
+        rule->next = *list;
+    }
+}
+
+void add_rule_to_list(
+    struct rule* rule) 
+{
+    struct rule **list, **other_list = NULL;
+
+    if (rule->dir == dir_IN) {
+        //
+        // This rule applies to incoming packets only
+        //
+        list = &rules_in;
+    }
+    else if (rule->dir == dir_OUT) {
+        //
+        // This rule applies to outgoing packets only
+        //
+        list = &rules_out;
+    }
+    else {
+        //
+        // This is an inout rule, applies to both pathways
+        //
+        list = &rules_in;
+        other_list = &rules_out;
+    }
+    //
+    // Add to the primary list
+    //
+    add_rule_to_given_list(list, rule);
+    if (other_list == NULL) {
+        //
+        // If it is needed to add to the other list
+        //
+        add_rule_to_given_list(other_list, rule);
+    }
 }
 
 
@@ -159,57 +265,105 @@ int create_rule(
     const char* rule_str,
     const int rule_size) 
 {
-    char* temp_rule_str = rule_str;
+    const char* temp_rule_str = rule_str;
     int temp_rule_len = rule_size;
-    const char comma = ',', colon = ':';
-    struct _rule* new_rule = (struct _rule*)malloc(sizeof(struct _rule));
+
+    struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_KERNEL);
     if (new_rule == NULL) {
         goto error;
     }
-    //
-    // parse the action DROP/ALLOW
-    //
-    if (strncmpi(temp_rule_str, str_DROP, lstr_DROP) == 0) {
+    
+    if (temp_rule_len > lstr_DROP && strncasecmp(temp_rule_str, str_DROP, lstr_DROP) == 0) {
+        //
+        // Packet to be dropped
+        //
         new_rule->action = act_DROP; temp_rule_str += lstr_DROP; temp_rule_len -= lstr_DROP;
     }
-    else if (strncmpi(temp_rule_str, str_ALLOW, lstr_ALLOW) == 0) {
+    else if (temp_rule_len > lstr_ALLOW && strncasecmp(temp_rule_str, str_ALLOW, lstr_ALLOW) == 0) {
+        //
+        // Packet to be allowed
+        //
         new_rule->action = act_ALLOW; temp_rule_str += lstr_ALLOW; temp_rule_len -= lstr_ALLOW;
     }
     else {
         goto error;
     }
-    //
-    // Check for the delimiter = ','
-    //
-    if (temp_rule_len <= 0 || temp_rule_str[0] != comma) {
-        goto error;
+
+    if (temp_rule_len > lstr_IN && strncasecmp(temp_rule_str, str_IN, lstr_IN) == 0) {
+        //
+        // Rule to be applied on incoming packets
+        //
+        new_rule->dir = dir_IN; temp_rule_str += lstr_IN; temp_rule_len -= lstr_IN;
+    }
+    else if (temp_rule_len > lstr_OUT && strncasecmp(temp_rule_str, str_OUT, lstr_OUT) == 0) {
+        //
+        // Rule to be applied on outgoing packets
+        //
+        new_rule->dir = dir_OUT; temp_rule_str += lstr_OUT; temp_rule_len -= lstr_OUT;
+    }
+    else if (temp_rule_len > lstr_INOUT && strncasecmp(temp_rule_str, str_INOUT, lstr_INOUT) == 0) {
+        //
+        // Rule to be applied on both incoming and outgoing packets
+        //
+        new_rule->dir = dir_INOUT; temp_rule_str += lstr_INOUT; temp_rule_len -= lstr_OUT;
     }
     else {
-        temp_rule_str++; temp_rule_len--;
+        goto error;
     }
-    //
-    // parse the layer MAC/IP/TCP
-    //
-    if (temp_rule_len > lstr_MAC && strncmpi(temp_rule_str, str_MAC, lstr_MAC) == 0) {
+
+    if (strncasecmp(temp_rule_str, str_SRC, lstr_SRC) == 0) {
+        //
+        // Rule value should be matched with the source address
+        //
+        new_rule->fld = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
+    }
+    else if (strncasecmp(temp_rule_str, str_DEST, lstr_DEST) == 0) {
+        //
+        // Rule value should be matched with the destination address
+        //
+        new_rule->fld = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
+    }
+    else {
+        goto error;
+    }
+
+    if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0) {
+        //
+        // This rule applies to the Ethernet address, what follows should be a 
+        // valid MAC address of the form AA:BB:CC:DD:EE:FF in hexadecimal notation
+        //
         new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
-        if (temp_rule_str[0] != colon || get_mac_address(++temp_rule_str, --temp_rule_len, new_rule) != 0)
+        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0)
             goto error; 
     }
-    else if (temp_rule_len > lstr_IP && strncmpi(temp_rule_str, str_IP, lstr_IP) == 0) {
+    else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
+        //
+        // This rule applies to the IP address, what follows should be a 
+        // valid IPv4 address of the form AAA:BBB:CCC:DDD in decimal notation
+        // TODO: Currently all 3 digits need to be specified, should remove this requirement
+        //
         new_rule->type = type_IP; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
-        if (temp_rule_str[0] != colon || get_ip_address(++temp_rule_str, --temp_rule_len, new_rule) != 0) {
+        if (get_ip_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error;
         }
     }
-    else if (temp_rule_len > lstr_TCP && strncmpi(temp_rule_str, str_TCP, lstr_TCP) == 0) {
+    else if (temp_rule_len > lstr_TCP && strncasecmp(temp_rule_str, str_TCP, lstr_TCP) == 0) {
+        //
+        // This rule applies to the TCP ports, what follows should be a 
+        // valid port number in decimal notation
+        //
         new_rule->type = type_TCP; temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
-        if (temp_rule_str[0] != colon || get_port(++temp_rule_str, --temp_rule_len, new_rule) != 0) {
+        if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error;
         }
     }
-    else if (temp_rule_len > lstr_UDP && strncmpi(temp_rule_str, str_UDP, lstr_UDP) == 0) {
+    else if (temp_rule_len > lstr_UDP && strncasecmp(temp_rule_str, str_UDP, lstr_UDP) == 0) {
+        //
+        // This rule applies to the UDP ports, what follows should be a 
+        // valid port number in decimal notation
+        //
         new_rule->type = type_UDP; temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
-        if (temp_rule_str[0] != colon || get_port(++temp_rule_str, --temp_rule_len, new_rule) != 0) {
+        if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error;
         }
     }
@@ -217,39 +371,71 @@ int create_rule(
         goto error;
     }
 
+#ifdef DBG
+    //
+    // Dump out the rule just in case
+    //
+    print_rule(rule);
+#endif 
+    //
+    // Add the rule to whichever list it needs to be added to
+    //
+    add_rule_to_list(new_rule);
     return 0;
 error:
     return -1;
 }
 
-int parse_filter_rules() 
+int parse_filter_rules(void) 
 {
-    char *current_rule;
+    const char *current_rule;
     int current_size = 0, size, index = 0;
     const char delimiter = '|';
+    //
+    // Trim starting spaces
+    //
+    while (filter[index] == ' ') {
+        index++;
+    }
 
     size = strlen(filter);
     current_rule = filter;
 
     while (index <= size) {
         if (filter[index] == delimiter || filter[index] == '\0') {
+            //
+            // Encountered a delimiter or end of string
+            // All characters from current_rule to here are part of a rule
+            //
             current_size = &filter[index] - current_rule;
             if (0 != create_rule(current_rule, current_size)) {
                 return -1;
             }
 
-            if (index != size) {
-                current_rule = &filter[index + 1];
-            }
+            index++;
+            while (filter[index] == ' ' && index < size) {
+                index++;
+            }       
+            current_rule = &filter[index];
         }
-        index++;
+        else {
+            //
+            // Just increment and move on to the next character
+            //
+            index++;
+        }
     }
     return 0;
 }
 
-
 int init_module(void) 
 {
+    //
+    // Read and parse the rules specified in the rules file
+    //
+    if (0 != parse_filter_rules()) {
+       return -1;
+    }
     //
     // Register the hook for outgoing packets
     //
@@ -266,13 +452,7 @@ int init_module(void)
     nf_incoming_hook.pf = PF_INET;
     nf_incoming_hook.priority = NF_IP_PRI_FIRST;
     nf_register_hook(&nf_incoming_hook);
-    //
-    // Read the rules specified in the rules file
-    //
-    if (0 != parse_filter_rules()) {
-       return -1;
-    }
-
+    
     printk(KERN_INFO "Simple firewall loaded.");
     printk(KERN_INFO "%s\n", filter);
     return 0;

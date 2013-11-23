@@ -48,7 +48,7 @@
 
 typedef unsigned char BYTE;
 
-struct _rule {
+struct rule {
     BYTE type;
     BYTE action;
     BYTE fld;
@@ -72,6 +72,8 @@ struct _rule {
     		int padding;
     	} net;
     };
+
+    struct rule* next;
 };
 
 #endif
