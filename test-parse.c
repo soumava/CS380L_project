@@ -28,7 +28,7 @@ int get_port(
     struct rule* rule) 
 {
     int index = 0, port = 0, expt = 1;
-    const char delimiter = '&';
+    const char delimiter = '|';
 
     while (rule_str[index] != '\0' && rule_str[index] != delimiter && rule_str[index] != ' ') {
         if (rule_str[index] < 48 || rule_str[index] > 57) {
@@ -208,8 +208,11 @@ void add_rule_to_lists(
     if (other_list != NULL) {
         //
         // If it is needed to add to the other list
+        // To avoid double free and make things simpler, copying to another structure
         //
-        add_rule_to_list(other_list, rule);
+        struct rule* new_rule = (struct rule*)malloc(sizeof(struct rule));
+        memcpy(new_rule, rule, sizeof(struct rule));
+        add_rule_to_list(other_list, new_rule);
     }
 }
 
@@ -317,7 +320,7 @@ int parse_filter_rules(const char* filter)
 {
     const char *current_rule;
     int current_size = 0, size, index = 0;
-    const char delimiter = '&';
+    const char delimiter = '|';
     struct rule* rule;
     //
     // Trim starting spaces
@@ -362,6 +365,18 @@ int parse_filter_rules(const char* filter)
     return 0;
 }
 
+void cleanup_rule_list(struct rule* list) 
+{
+    struct rule* first, *temp;
+    first = list;
+
+    while (first != NULL) {
+        temp = first->next;
+        free(first);
+        first = temp;
+    }
+}
+
 void main(int argc, char** argv) 
 {
     int ret;
@@ -371,4 +386,6 @@ void main(int argc, char** argv)
 
     ret = parse_filter_rules(argv[1]);
     printf("%d\n", ret);
+    cleanup_rule_list(rules_in);
+    cleanup_rule_list(rules_out);
 }

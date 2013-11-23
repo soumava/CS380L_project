@@ -36,7 +36,7 @@ unsigned int hook_func_incoming(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-    printk(KERN_INFO "%d\n", in->type);
+    // printk(KERN_INFO "%d\n", in->type);
     return NF_ACCEPT;
 }
 
@@ -110,7 +110,7 @@ int get_mac_address(
     if (rule_len < (eth_num_bytes * 3 - 1)) {
         goto error;
     }
-    
+
     while(byte_index < eth_num_bytes) {
         //
         // In case of later bytes, the first character should be a ':'
@@ -136,7 +136,7 @@ int get_mac_address(
     else {
         memcpy(rule->eth.dest, mac_address, eth_num_bytes);
     }
-
+    
     return 0;
 
 error:
@@ -255,8 +255,11 @@ void add_rule_to_lists(
     if (other_list != NULL) {
         //
         // If it is needed to add to the other list
+        // To avoid double free and make things simpler, copying to another structure
         //
-        add_rule_to_list(other_list, rule);
+        struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_KERNEL);
+        memcpy(new_rule, rule, sizeof(struct rule));
+        add_rule_to_list(other_list, new_rule);
     }
 }
 
@@ -342,9 +345,10 @@ int create_rule(
         //
         printk(KERN_INFO "Matched Mac.");
         new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
-        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0)
+        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
             printk(KERN_INFO "Failed mac address extraction.");
             goto error; 
+        }
     }
     else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
         //
@@ -387,7 +391,7 @@ int create_rule(
         printk(KERN_INFO "Match failed.");
         goto error;
     }
-
+    
 //#ifdef DBG
     //
     // Dump out the rule just in case
