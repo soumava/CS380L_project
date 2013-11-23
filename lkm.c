@@ -10,8 +10,8 @@ MODULE_LICENSE("GPL");
 struct nf_hook_ops nf_incoming_hook;
 struct nf_hook_ops nf_outgoing_hook;
 char *filter;
-struct rule* rules_in;
-struct rule* rules_out;
+struct rule* rules_in = NULL;
+struct rule* rules_out = NULL;
 
 module_param(filter, charp, 0);
 
@@ -193,7 +193,7 @@ error:
     return -1;
 }
 
-#ifdef DBG
+//#ifdef DBG
 void print_rule(struct rule* rule) 
 {
     printk(KERN_INFO "Type: %x\n", rule->type & 0xFF);
@@ -204,9 +204,9 @@ void print_rule(struct rule* rule)
     printk(KERN_INFO "Bytes 04-07: %x %x %x %x\n", rule->eth.src[4], rule->eth.src[5], rule->eth.dest[0], rule->eth.dest[1]);
     printk(KERN_INFO "Bytes 08-11: %x %x %x %x\n", rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
 }
-#endif
+//#endif
 
-void add_rule_to_given_list(
+void add_rule_to_list(
     struct rule** list,
     struct rule* rule) 
 {
@@ -224,7 +224,7 @@ void add_rule_to_given_list(
     }
 }
 
-void add_rule_to_list(
+void add_rule_to_lists(
     struct rule* rule) 
 {
     struct rule **list, **other_list = NULL;
@@ -251,12 +251,12 @@ void add_rule_to_list(
     //
     // Add to the primary list
     //
-    add_rule_to_given_list(list, rule);
-    if (other_list == NULL) {
+    add_rule_to_list(list, rule);
+    if (other_list != NULL) {
         //
         // If it is needed to add to the other list
         //
-        add_rule_to_given_list(other_list, rule);
+        add_rule_to_list(other_list, rule);
     }
 }
 
@@ -270,6 +270,7 @@ int create_rule(
 
     struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_KERNEL);
     if (new_rule == NULL) {
+        printk(KERN_INFO "Failed to allocate memory for rule.");
         goto error;
     }
     
@@ -277,12 +278,14 @@ int create_rule(
         //
         // Packet to be dropped
         //
+        printk(KERN_INFO "Matched Drop.");
         new_rule->action = act_DROP; temp_rule_str += lstr_DROP; temp_rule_len -= lstr_DROP;
     }
     else if (temp_rule_len > lstr_ALLOW && strncasecmp(temp_rule_str, str_ALLOW, lstr_ALLOW) == 0) {
         //
         // Packet to be allowed
         //
+        printk(KERN_INFO "Matched Allow.");
         new_rule->action = act_ALLOW; temp_rule_str += lstr_ALLOW; temp_rule_len -= lstr_ALLOW;
     }
     else {
@@ -293,18 +296,21 @@ int create_rule(
         //
         // Rule to be applied on incoming packets
         //
+        printk(KERN_INFO "Matched In.");
         new_rule->dir = dir_IN; temp_rule_str += lstr_IN; temp_rule_len -= lstr_IN;
     }
     else if (temp_rule_len > lstr_OUT && strncasecmp(temp_rule_str, str_OUT, lstr_OUT) == 0) {
         //
         // Rule to be applied on outgoing packets
         //
+        printk(KERN_INFO "Matched Out.");
         new_rule->dir = dir_OUT; temp_rule_str += lstr_OUT; temp_rule_len -= lstr_OUT;
     }
     else if (temp_rule_len > lstr_INOUT && strncasecmp(temp_rule_str, str_INOUT, lstr_INOUT) == 0) {
         //
         // Rule to be applied on both incoming and outgoing packets
         //
+        printk(KERN_INFO "Matched Inout.");
         new_rule->dir = dir_INOUT; temp_rule_str += lstr_INOUT; temp_rule_len -= lstr_OUT;
     }
     else {
@@ -315,12 +321,14 @@ int create_rule(
         //
         // Rule value should be matched with the source address
         //
+        printk(KERN_INFO "Matched Src.");
         new_rule->fld = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
     }
     else if (strncasecmp(temp_rule_str, str_DEST, lstr_DEST) == 0) {
         //
         // Rule value should be matched with the destination address
         //
+        printk(KERN_INFO "Matched Dest.");
         new_rule->fld = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
     }
     else {
@@ -332,8 +340,10 @@ int create_rule(
         // This rule applies to the Ethernet address, what follows should be a 
         // valid MAC address of the form AA:BB:CC:DD:EE:FF in hexadecimal notation
         //
+        printk(KERN_INFO "Matched Mac.");
         new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
         if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0)
+            printk(KERN_INFO "Failed mac address extraction.");
             goto error; 
     }
     else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
@@ -342,8 +352,10 @@ int create_rule(
         // valid IPv4 address of the form AAA:BBB:CCC:DDD in decimal notation
         // TODO: Currently all 3 digits need to be specified, should remove this requirement
         //
+        printk(KERN_INFO "Matched Ip.");
         new_rule->type = type_IP; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
         if (get_ip_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
+            printk(KERN_INFO "Failed ip address extraction.");
             goto error;
         }
     }
@@ -352,8 +364,10 @@ int create_rule(
         // This rule applies to the TCP ports, what follows should be a 
         // valid port number in decimal notation
         //
+        printk(KERN_INFO "Matched Tcp.");
         new_rule->type = type_TCP; temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
         if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
+            printk(KERN_INFO "Failed port extraction.");
             goto error;
         }
     }
@@ -362,27 +376,35 @@ int create_rule(
         // This rule applies to the UDP ports, what follows should be a 
         // valid port number in decimal notation
         //
+        printk(KERN_INFO "Matched Udp.");
         new_rule->type = type_UDP; temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
         if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
+            printk(KERN_INFO "Failed port extraction.");
             goto error;
         }
     }
     else {
+        printk(KERN_INFO "Match failed.");
         goto error;
     }
 
-#ifdef DBG
+//#ifdef DBG
     //
     // Dump out the rule just in case
     //
-    print_rule(rule);
-#endif 
+    print_rule(new_rule);
+//#endif 
     //
     // Add the rule to whichever list it needs to be added to
     //
-    add_rule_to_list(new_rule);
+    add_rule_to_lists(new_rule);
     return 0;
+
 error:
+    if (new_rule != NULL) {
+        kfree(new_rule);
+    }
+
     return -1;
 }
 
@@ -398,6 +420,7 @@ int parse_filter_rules(void)
         index++;
     }
 
+    printk(KERN_INFO "Filter string is: %s\n.", filter);
     size = strlen(filter);
     current_rule = filter;
 
@@ -409,6 +432,7 @@ int parse_filter_rules(void)
             //
             current_size = &filter[index] - current_rule;
             if (0 != create_rule(current_rule, current_size)) {
+                printk(KERN_INFO "Failed to create rule at: %s %d\n.", current_rule, current_size);
                 return -1;
             }
 
@@ -428,14 +452,28 @@ int parse_filter_rules(void)
     return 0;
 }
 
+void cleanup_rule_list(struct rule* list) 
+{
+    struct rule* first, *temp;
+    first = list;
+
+    while (first != NULL) {
+        temp = first->next;
+        kfree(first);
+        first = temp;
+    }
+}
+
 int init_module(void) 
 {
     //
     // Read and parse the rules specified in the rules file
     //
     if (0 != parse_filter_rules()) {
+        printk(KERN_INFO "Failed to parse rules.");
        return -1;
     }
+    printk(KERN_INFO "Completed parsing rules.");
     //
     // Register the hook for outgoing packets
     //
@@ -463,6 +501,10 @@ void cleanup_module(void)
     // UN-register the hook with netfilter
     nf_unregister_hook(&nf_incoming_hook);
     nf_unregister_hook(&nf_outgoing_hook);
-
+    //
+    // Delete the allocated memory
+    //
+    cleanup_rule_list(rules_in);
+    cleanup_rule_list(rules_out);
     printk(KERN_INFO "Simple firewall unloaded\n");
 }

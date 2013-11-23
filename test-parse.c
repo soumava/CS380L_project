@@ -3,6 +3,9 @@
 #include <string.h>
 #include "lkm.h"
 
+struct rule* rules_in = NULL;
+struct rule* rules_out = NULL;
+
 BYTE get_dec_from_hex(const BYTE c) 
 {
     if (c >= 48 && c <= 58) {
@@ -156,6 +159,61 @@ error:
     return -1;
 }
 
+void add_rule_to_list(
+    struct rule** list,
+    struct rule* rule) 
+{
+    if (*list == NULL) {
+        //
+        // This is the first rule in this linked list
+        //
+        *list = rule;
+    }
+    else {
+        //
+        // Just add it on as the first rule in the list
+        //
+        rule->next = *list;
+    }
+}
+
+void add_rule_to_lists(
+    struct rule* rule) 
+{
+    struct rule **list, **other_list = NULL;
+
+    if (rule->dir == dir_IN) {
+        //
+        // This rule applies to incoming packets only
+        //
+        list = &rules_in;
+    }
+    else if (rule->dir == dir_OUT) {
+        //
+        // This rule applies to outgoing packets only
+        //
+        list = &rules_out;
+    }
+    else {
+        //
+        // This is an inout rule, applies to both pathways
+        //
+        list = &rules_in;
+        other_list = &rules_out;
+    }
+    //
+    // Add to the primary list
+    //
+    add_rule_to_list(list, rule);
+    if (other_list != NULL) {
+        //
+        // If it is needed to add to the other list
+        //
+        add_rule_to_list(other_list, rule);
+    }
+}
+
+
 int create_rule(
     const char* rule_str,
     const int rule_size,
@@ -237,6 +295,7 @@ int create_rule(
         goto error;
     }
 
+    add_rule_to_lists(new_rule);
     return 0;
 error:
     return -1;
@@ -252,6 +311,7 @@ void print_rule(struct rule* rule)
     printf("Bytes 04-07: %x %x %x %x\n", rule->eth.src[4], rule->eth.src[5], rule->eth.dest[0], rule->eth.dest[1]);
     printf("Bytes 08-11: %x %x %x %x\n", rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
 }
+
 
 int parse_filter_rules(const char* filter) 
 {
@@ -298,7 +358,6 @@ int parse_filter_rules(const char* filter)
             //
             index++;    
         }
-        
     }
     return 0;
 }
