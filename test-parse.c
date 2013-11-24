@@ -273,8 +273,9 @@ int create_rule(
     //
     if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0) {
         new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
-        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0)
+        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
             goto error; 
+        }
     }
     else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
         new_rule->type = type_IP; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;

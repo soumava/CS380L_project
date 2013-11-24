@@ -43,7 +43,7 @@
 #define lstr_OUT       (sizeof(str_OUT) - 1)
 #define lstr_INOUT     (sizeof(str_INOUT) - 1)
  
-#define eth_num_bytes  6
+#define eth_num_bytes  ETH_ALEN
 #define ip_num_bytes   4
 
 typedef unsigned char BYTE;
@@ -74,6 +74,27 @@ struct rule {
     };
 
     struct rule* next;
+};
+
+struct packet {
+    BYTE ip_next_proto;
+    BYTE src_mac_address[eth_num_bytes];
+    BYTE dest_mac_address[eth_num_bytes];
+    
+    uint32_t src_ip_address;
+    uint32_t dest_ip_address;
+
+    union {
+        struct {
+            uint16_t src_port;
+            uint16_t dest_port;
+        } tcp;
+
+        struct {
+            uint16_t src_port;
+            uint16_t dest_port;
+        } udp;
+    };
 };
 
 #endif

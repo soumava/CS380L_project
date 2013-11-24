@@ -3,6 +3,11 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/netdevice.h>
 #include <linux/slab.h>
+#include <linux/if_arp.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
 #include "lkm.h"
 
 MODULE_LICENSE("GPL");
@@ -12,8 +17,78 @@ struct nf_hook_ops nf_outgoing_hook;
 char *filter;
 struct rule* rules_in = NULL;
 struct rule* rules_out = NULL;
-
+//
+// Most important - this is what binds the configuration string to
+// the parameter 'filter'
+//
 module_param(filter, charp, 0);
+
+unsigned int apply_filters_to_packet(
+    const struct rule* list,
+    const struct packet* packet)
+{
+    //
+    // TODO: Vijay implement this!
+    //
+    return NF_ACCEPT;
+}    
+
+int skbuff_to_packet(
+    const struct net_device* device,
+    struct sk_buff* skb,
+    struct packet* packet) 
+{
+    struct ethhdr* eth_header = eth_hdr(skb);
+    struct iphdr* ip_header;
+    struct udphdr* udp_header;
+    struct tcphdr* tcp_header;
+    //
+    // Check if this is an ethernet device that sent the packet
+    //
+    if (device->type != ARPHRD_ETHER) {
+        goto error;
+    }
+
+    if (eth_header->h_proto == ETH_P_IP) {
+        ip_header = ip_hdr(skb);
+    
+        if (ip_header->protocol == IPPROTO_UDP) {
+            udp_header = udp_hdr(skb);
+            packet->ip_next_proto = IPPROTO_UDP;
+            packet->udp.src_port = udp_header->source;
+            packet->udp.dest_port = udp_header->dest;
+        }
+        else if (ip_header->protocol == IPPROTO_TCP) {
+            tcp_header = tcp_hdr(skb);
+            packet->ip_next_proto = IPPROTO_TCP;
+            packet->tcp.src_port = tcp_header->source;
+            packet->tcp.dest_port = tcp_header->dest;
+        }
+        else {
+            //
+            // This type of packet is not served by our module
+            //
+            goto error;
+        }
+    
+        memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
+        memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
+    
+        packet->src_ip_address = ip_header->saddr;
+        packet->dest_ip_address = ip_header->daddr;
+    }
+    else {
+        //
+        // This type of packet is not served by our module
+        //
+        goto error;
+    }
+
+    return 0;
+
+error:
+    return -1;  
+}
 
 unsigned int hook_func_outgoing(
     unsigned int hooknum,
@@ -22,10 +97,7 @@ unsigned int hook_func_outgoing(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-//    unsigned char* mac_header = skb_mac_header(skb);
-//    unsigned char* net_header = skb_network_header(skb);
-//    unsigned char* transport_header = skb_transport_header(skb);
-    printk(KERN_INFO "%d\n", out->type);
+//    printk(KERN_INFO "%d\n", out->type);
     return NF_ACCEPT;        
 }
 
@@ -37,7 +109,35 @@ unsigned int hook_func_incoming(
     int (*okfn)(struct sk_buff *))
 {
     // printk(KERN_INFO "%d\n", in->type);
-    return NF_ACCEPT;
+    unsigned int decision;
+    struct packet* packet = NULL;
+    //
+    // Fastpath: if there are no incoming rules, nothing to do; act as pass through
+    //
+    if (rules_in == NULL) {
+        decision = NF_ACCEPT;
+        goto end;
+    }
+
+    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    //
+    // Parse the sk_buff structure and retrieve all fields that we need to take a look at
+    //
+    if (skbuff_to_packet(in, skb, packet) == -1) {
+        //
+        // A return value of -1 indicates that it is not one of the packets we parse
+        //
+        decision = NF_ACCEPT;
+        goto end;
+    }
+
+    decision = apply_filters_to_packet(rules_in, packet);
+
+end:
+    if (packet != NULL) {
+        kfree(packet);
+    }
+    return decision;
 }
 
 BYTE get_dec_from_hex(const BYTE c) 
