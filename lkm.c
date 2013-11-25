@@ -23,15 +23,144 @@ struct rule* rules_out = NULL;
 //
 module_param(filter, charp, 0);
 
+int are_mac_addresses_equal(BYTE *addr1, BYTE *addr2){
+    int i = 0 ; 
+    while ( i < eth_num_bytes){
+        if( addr1[i] != addr2[i])
+            return 0;
+        i++;
+    }
+    return 1;
+}
+
+int are_ip_addresses_equal( BYTE *addr1, uint32_t addr2){
+    BYTE *addr2_byte =  (BYTE *)addr2;
+    int i = 0 ; 
+    while ( i < ip_num_bytes){
+        if( addr1[i] != addr2_byte[i]){
+            return 0;
+        }
+        i++;
+    }
+    return 1;
+}
+
+
+int are_net_addresses_equal( int addr1, uint16_t addr2){
+    if( addr1 != addr2){
+        return 0;
+    }
+    return 1;
+}
+
+
+// This method will return NF_DROP only if the rule applies to this packet and the action is DROP.
+// Otherwise, return NF_ACCEPT
+
+unsigned int apply_rule_to_packet(const struct rule *rule , const struct packet *packet){
+    unsigned int decision = NF_ACCEPT;
+
+    BYTE *rule_mac_address ;
+    BYTE *packet_mac_address;
+    BYTE *rule_ip_address;
+    uint32_t packet_ip_address;
+    int rule_net_address; 
+    uint16_t packet_net_address ;
+
+    switch( rule -> type ){
+        case type_MAC:
+            rule_mac_address = rule->eth.src; 
+            packet_mac_address = packet-> src_mac_address; 
+
+            if( rule -> fld == fld_DEST ){
+                rule_mac_address = rule->eth.dest;
+                packet_mac_address = packet->dest_mac_address;
+            }
+
+            if( are_mac_addresses_equal( rule_mac_address, packet_mac_address )){
+                if(rule -> action == act_DROP){
+                    decision = NF_DROP;
+                }
+            }
+            break;
+        case type_IP:
+            rule_ip_address = rule->ip.src; 
+            packet_ip_address = packet->src_ip_address; 
+            if( rule -> fld == fld_DEST ){
+                rule_ip_address = rule->ip.dest;
+                packet_ip_address = packet->dest_ip_address;
+            }
+            if( are_ip_addresses_equal(rule_ip_address,packet_ip_address ) ){
+                if( rule -> action == act_DROP){
+                    decision = NF_DROP;
+                }
+            }
+
+            break;
+
+        case type_TCP:
+            if( packet->ip_next_proto == IPPROTO_TCP ){
+                rule_net_address = rule->net.src; 
+                packet_net_address = packet->tcp.src_port; 
+                if( rule -> fld == fld_DEST ){
+                    rule_net_address = rule->net.dest;
+                    packet_net_address = packet->tcp.dest_port;
+                }
+                if( are_net_addresses_equal(rule_net_address,packet_net_address ) ){
+                    if( rule -> action == act_DROP){
+                        decision = NF_DROP;
+                    }
+                }
+            }
+            break;
+        case type_UDP:
+            if( packet->ip_next_proto == IPPROTO_UDP ){
+                int rule_net_address = rule->net.src; 
+                uint16_t packet_net_address = packet->udp.src_port; 
+                if( rule -> fld == fld_DEST ){
+                    rule_net_address = rule->net.dest;
+                    packet_net_address = packet->udp.dest_port;
+                }
+                if( are_net_addresses_equal(rule_net_address,packet_net_address ) ){
+                    if( rule -> action == act_DROP){
+                        decision = NF_DROP;
+                    }
+                }
+
+            }
+
+            break;
+
+    }
+
+    return decision;
+     
+}
+
 unsigned int apply_filters_to_packet(
     const struct rule* list,
     const struct packet* packet)
 {
     //
-    // TODO: Vijay implement this!
+    // If there are two conflicting rules, NF_DROP will take
+    // precedence. 
     //
-    return NF_ACCEPT;
+
+    int decision = NF_ACCEPT; 
+    
+    while( list != NULL){
+        decision = apply_rule_to_packet(list,packet);
+        if( decision == NF_DROP){
+            goto finish;
+        }
+        list = list->next;
+    }
+
+finish:
+    return decision;
 }    
+
+
 
 int skbuff_to_packet(
     const struct net_device* device,
@@ -98,6 +227,36 @@ unsigned int hook_func_outgoing(
     int (*okfn)(struct sk_buff *))
 {
 //    printk(KERN_INFO "%d\n", out->type);
+    unsigned int decision;
+    struct packet* packet = NULL;
+    //
+    // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
+    //
+    if (rules_out == NULL) {
+        decision = NF_ACCEPT;
+        goto end;
+    }
+
+    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    //
+    // Parse the sk_buff structure and retrieve all fields that we need to take a look at
+    //
+	//TODO: Should this be in or out? 
+    if (skbuff_to_packet(in, skb, packet) == -1) {
+        //
+        // A return value of -1 indicates that it is not one of the packets we parse
+        //
+        decision = NF_ACCEPT;
+        goto end;
+    }
+
+    decision = apply_filters_to_packet(rules_in, packet);
+
+end:
+    if (packet != NULL) {
+        kfree(packet);
+    }
+    return decision;
     return NF_ACCEPT;        
 }
 
