@@ -129,7 +129,6 @@ unsigned int apply_single_rule_to_packet(const struct rule *rule , const struct 
     }
 
     return decision;
-     
 }
 
 unsigned int apply_filters_to_packet(
@@ -154,7 +153,6 @@ unsigned int apply_filters_to_packet(
 finish:
     return decision;
 }    
-
 
 
 int skbuff_to_packet(
@@ -221,7 +219,6 @@ unsigned int hook_func_outgoing(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-//    printk(KERN_INFO "%d\n", out->type);
     unsigned int decision;
     struct packet* packet = NULL;
     //
@@ -236,8 +233,7 @@ unsigned int hook_func_outgoing(
     //
     // Parse the sk_buff structure and retrieve all fields that we need to take a look at
     //
-	//TODO: Should this be in or out? 
-    if (skbuff_to_packet(in, skb, packet) == -1) {
+    if (skbuff_to_packet(out, skb, packet) == -1) {
         //
         // A return value of -1 indicates that it is not one of the packets we parse
         //
@@ -245,7 +241,7 @@ unsigned int hook_func_outgoing(
         goto end;
     }
 
-    decision = apply_filters_to_packet(rules_in, packet);
+    decision = apply_filters_to_packet(rules_out, packet);
 
 end:
     if (packet != NULL) {
@@ -262,7 +258,6 @@ unsigned int hook_func_incoming(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-    // printk(KERN_INFO "%d\n", in->type);
     unsigned int decision;
     struct packet* packet = NULL;
     //

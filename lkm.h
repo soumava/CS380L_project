@@ -1,16 +1,16 @@
 #ifndef _LKM_H_
 #define _LKM_H_
 
-#define type_MAC       0x1
-#define type_IP        0x2
-#define type_TCP       0x4
-#define type_UDP       0x8
+#define fld_SRC             0x1
+#define fld_DEST            0x2
+
+#define shift_MAC           0x0
+#define shift_IP            0x1
+#define shift_TCP           0x2
+#define shift_UDP           0x3
 
 #define act_DROP       0x1
 #define act_ALLOW      0x2
-
-#define fld_SRC        0x1
-#define fld_DEST       0x2
 
 #define dir_IN         0x1
 #define dir_OUT        0x2
@@ -49,29 +49,27 @@
 typedef unsigned char BYTE;
 
 struct rule {
-    BYTE type;
     BYTE action;
-    BYTE fld;
     BYTE dir;
  
-    union {
-    	struct {
-    		BYTE src[eth_num_bytes];
-    		BYTE dest[eth_num_bytes];
-    	} eth;
+	struct {
+        BYTE type;
+		BYTE src[eth_num_bytes];
+		BYTE dest[eth_num_bytes];
+	} eth;
 
-    	struct {
-            BYTE src[ip_num_bytes];
-    		BYTE dest[ip_num_bytes];
-    		BYTE padding[4];
-    	} ip;
+	struct {
+        BYTE type;
+        BYTE src[ip_num_bytes];
+		BYTE dest[ip_num_bytes];
+	} ip;
 
-    	struct {
-    		int src;
-    		int dest;
-    		int padding;
-    	} net;
-    };
+	struct {
+        BYTE src_protocol;
+        BYTE dest_protocol;
+    	int src;
+		int dest;
+	} net;
 
     struct rule* next;
 };

@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <linux/types.h>
+#include <linux/if_ether.h>
+#include <stdint.h>
+#include <linux/in.h>
 #include "lkm.h"
 
 struct rule* rules_in = NULL;
@@ -21,21 +25,28 @@ BYTE get_dec_from_hex(const BYTE c)
         return -1;
 }
 
-
+//
+// Reads the port number associated with a tcp or udp rule
+// Returns the number of characters read or -1 in case of an error
+//
 int get_port(
+    BYTE field,
     const char* rule_str,
     const int rule_len,
     struct rule* rule) 
 {
-    int index = 0, port = 0, expt = 1;
-    const char delimiter = '|';
+    int index = 0, port = 0, expt = 1, ret;
+    const char rule_delimiter = '|', delimiter = ',';
 
-    while (rule_str[index] != '\0' && rule_str[index] != delimiter && rule_str[index] != ' ') {
+    while (rule_str[index] != '\0' && rule_str[index] != rule_delimiter 
+        && rule_str[index] != ' '  && rule_str[index] != delimiter) {
         if (rule_str[index] < 48 || rule_str[index] > 57) {
             goto error;
         }
         index++;
     }
+
+    ret = index;
 
     if (index == 0) {
         goto error;
@@ -47,21 +58,25 @@ int get_port(
         expt *= 10;
     }
 
-    if (rule->fld == fld_SRC) {
+    if (field == fld_SRC) {
         rule->net.src = port;
     }
     else {
         rule->net.dest = port;
     }
 
-return 0;
+return ret;
 
 error:
     return -1;    
 }
 
-
+//
+// Reads a mac address associated with a mac rule
+// Returns the number of characters read or -1 in case of an error
+//
 int get_mac_address(
+    BYTE field, 
     const char* rule_str, 
     const int rule_len,
     struct rule* rule) 
@@ -96,20 +111,25 @@ int get_mac_address(
         mac_address[byte_index++] = num_dec_1 * 16 + num_dec_2;
     }
 
-    if (rule->fld == fld_SRC) {
+    if (field == fld_SRC) {
         memcpy(rule->eth.src, mac_address, eth_num_bytes);
     }
     else {
         memcpy(rule->eth.dest, mac_address, eth_num_bytes);
     }
 
-    return 0;
+    return index;
 
 error:
     return -1;    
 }
 
+//
+// Reads an ip address in the form of aaa.bbb.ccc.ddd 
+// Returns the number of characters read or -1 in case of error
+//
 int get_ip_address(
+    BYTE field,
     const char* rule_str,
     const int rule_len,
     struct rule* rule) 
@@ -146,14 +166,14 @@ int get_ip_address(
         ip_address[byte_index++] = num_dec_1 * 100 + num_dec_2 * 10 + num_dec_3;
     }
 
-    if (rule->fld == fld_SRC) {
+    if (field == fld_SRC) {
         memcpy(rule->ip.src, ip_address, ip_num_bytes);
     }
     else {
         memcpy(rule->ip.dest, ip_address, ip_num_bytes);
     }
 
-    return 0;
+    return index;
 
 error:
     return -1;
@@ -223,7 +243,7 @@ int create_rule(
     struct rule* new_rule) 
 {
     const char* temp_rule_str = rule_str;
-    int temp_rule_len = rule_size;
+    int temp_rule_len = rule_size, nbytes, type;
     const char comma = ',', colon = ':';
     
     if (new_rule == NULL) {
@@ -256,47 +276,116 @@ int create_rule(
     else {
         goto error;
     }
+
+add_to_rule:    
     //
     // parse the field SRC/DEST
     //
     if (strncasecmp(temp_rule_str, str_SRC, lstr_SRC) == 0) {
-        new_rule->fld = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
+        type = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
     }
     else if (strncasecmp(temp_rule_str, str_DEST, lstr_DEST) == 0) {
-        new_rule->fld = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
+        type = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
     }
     else {
         goto error;
     }
+
     //
     // parse the layer MAC/IP/TCP
     //
-    if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0) {
-        new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
-        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
+    if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0 
+        && (new_rule->eth.type & type) == 0) {
+        
+        new_rule->eth.type |= type; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
+        if ((nbytes = get_mac_address(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             goto error; 
         }
     }
-    else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
-        new_rule->type = type_IP; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
-        if (get_ip_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
+    else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0 
+        && (new_rule->ip.type & type) == 0) {
+        
+        new_rule->ip.type |= type; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
+        if ((nbytes = get_ip_address(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             goto error;
         }
     }
     else if (temp_rule_len > lstr_TCP && strncasecmp(temp_rule_str, str_TCP, lstr_TCP) == 0) {
-        new_rule->type = type_TCP; temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
-        if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
+        //
+        // The rule should not overwrite a previously set rule
+        //
+        if ((type == fld_SRC && new_rule->net.src_protocol != 0) ||
+            (type == fld_DEST && new_rule->net.dest_protocol != 0)) {
+            goto error;
+        }
+        //
+        // The rule should not mention TCP port for one field and UDP port for the other
+        //
+        if (type == fld_SRC) {
+            if (new_rule->net.dest_protocol == 0 || new_rule->net.dest_protocol == IPPROTO_TCP) 
+                new_rule->net.src_protocol = IPPROTO_TCP;
+            else
+                goto error;    
+        }
+        else {
+            if (new_rule->net.src_protocol == 0 || new_rule->net.src_protocol == IPPROTO_TCP)
+                new_rule->net.dest_protocol = IPPROTO_TCP;
+            else 
+                goto error;
+        } 
+            
+        temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
+        if ((nbytes = get_port(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             goto error;
         }
     }
     else if (temp_rule_len > lstr_UDP && strncasecmp(temp_rule_str, str_UDP, lstr_UDP) == 0) {
-        new_rule->type = type_UDP; temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
-        if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
+        //
+        // The rule should not overwrite a previously set rule
+        //
+        if ((type == fld_SRC && new_rule->net.src_protocol != 0) ||
+            (type == fld_DEST && new_rule->net.dest_protocol != 0)) {
+            goto error;
+        }
+
+        //
+        // The rule should not mention TCP port for one field and UDP port for the other
+        //
+        if (type == fld_SRC) {
+            if (new_rule->net.dest_protocol == 0 || new_rule->net.dest_protocol == IPPROTO_UDP) 
+                new_rule->net.src_protocol = IPPROTO_UDP;
+            else
+                goto error;    
+        }
+        else {
+            if (new_rule->net.src_protocol == 0 || new_rule->net.src_protocol == IPPROTO_UDP)
+                new_rule->net.dest_protocol = IPPROTO_UDP;
+            else 
+                goto error;
+        } 
+        
+        temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
+        if ((nbytes = get_port(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             goto error;
         }
     }
     else {
         goto error;
+    }
+
+    temp_rule_len -= nbytes; 
+    temp_rule_str += nbytes;
+    type = 0;
+
+    if (temp_rule_len != 0) {
+        if (temp_rule_str[0] == comma) {
+            temp_rule_str++;
+            temp_rule_len--;
+            goto add_to_rule;
+        }
+        else {
+            goto error;
+        }
     }
 
     add_rule_to_lists(new_rule);
@@ -307,15 +396,19 @@ error:
 
 void print_rule(struct rule* rule) 
 {
-    printf("Type: %x\n", rule->type & 0xFF);
     printf("Action: %x\n", rule->action & 0xFF);
-    printf("Field: %x\n", rule->fld & 0xFF);
     printf("Direction: %x\n", rule->dir & 0xFF);
-    printf("Bytes 00-03: %x %x %x %x\n", rule->eth.src[0], rule->eth.src[1], rule->eth.src[2], rule->eth.src[3]);
-    printf("Bytes 04-07: %x %x %x %x\n", rule->eth.src[4], rule->eth.src[5], rule->eth.dest[0], rule->eth.dest[1]);
-    printf("Bytes 08-11: %x %x %x %x\n", rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
+    printf("Eth flag: %d\n", rule->eth.type);
+    printf("Eth src: %x %x %x %x %x %x\n", rule->eth.src[0], rule->eth.src[1], rule->eth.src[2], rule->eth.src[3], rule->eth.src[4], rule->eth.src[5]);
+    printf("Eth dest: %x %x %x %x %x %x\n", rule->eth.dest[0], rule->eth.dest[1], rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
+    printf("IP flag: %d\n", rule->ip.type);
+    printf("IP src: %x %x %x %x\n", rule->ip.src[0], rule->ip.src[1], rule->ip.src[2], rule->ip.src[3]);
+    printf("IP dest: %x %x %x %x\n", rule->ip.dest[0], rule->ip.dest[1], rule->ip.dest[2], rule->ip.dest[3]);
+    printf("Net src proto: %d\n", rule->net.src_protocol);
+    printf("Net dest proto: %d\n", rule->net.dest_protocol);
+    printf("Net src: %d \n", rule->net.src);
+    printf("Net dest: %d\n\n", rule->net.dest);
 }
-
 
 int parse_filter_rules(const char* filter) 
 {
