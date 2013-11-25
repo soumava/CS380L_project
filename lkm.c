@@ -43,9 +43,9 @@ int are_ip_addresses_equal(
     int i = 0 ; 
     BYTE *addr2_byte =  (BYTE *)&addr2;
     
-    printk( KERN_INFO ": %x %x %x %x, %x %x %x %x\n", 
-        addr1[0], addr1[1], addr1[2], addr1[3],
-        addr2_byte[0], addr2_byte[1], addr2_byte[2], addr2_byte[3]);
+    // printk( KERN_INFO ": %x %x %x %x, %x %x %x %x\n", 
+    //     addr1[0], addr1[1], addr1[2], addr1[3],
+    //     addr2_byte[0], addr2_byte[1], addr2_byte[2], addr2_byte[3]);
     
     while ( i < ip_num_bytes){
         if( addr1[i] != addr2_byte[i]){
@@ -172,15 +172,15 @@ finished:
 
 
 int skbuff_to_packet(
+    BYTE direction,
     const struct net_device* device,
     struct sk_buff* skb,
     struct packet* packet) 
 {
-    // struct ethhdr* eth_header = NULL; 
-    // struct iphdr* ip_header = NULL;
-    // struct udphdr* udp_header = NULL;
-    // struct tcphdr* tcp_header = NULL;
-    //BYTE* temp;
+    struct ethhdr* eth_header = NULL; 
+    struct iphdr* ip_header = NULL;
+    struct udphdr* udp_header = NULL;
+    struct tcphdr* tcp_header = NULL;
     //
     // Check if this is an ethernet device that sent the packet
     //
@@ -188,48 +188,55 @@ int skbuff_to_packet(
         goto error;
     }
 
-    // eth_header = eth_hdr(skb);
+    if (direction == dir_IN)
+        eth_header = eth_hdr(skb);
     
-    // if (eth_header->h_proto == ETH_P_IP) {
-    //     ip_header = ip_hdr(skb);
-    //     if (ip_header->protocol == IPPROTO_UDP) {
-    //         udp_header = udp_hdr(skb);
-    //         // packet->ip_next_proto = IPPROTO_UDP;
-    //         // packet->udp.src_port = udp_header->source;
-    //         // packet->udp.dest_port = udp_header->dest;
-    //     }
-    //     else if (ip_header->protocol == IPPROTO_TCP) {
-    //         tcp_header = tcp_hdr(skb);
-    //         // packet->ip_next_proto = IPPROTO_TCP;
-    //         // packet->tcp.src_port = tcp_header->source;
-    //         // packet->tcp.dest_port = tcp_header->dest;
-    //     }
-    //     else {
-    //         //
-    //         // This type of packet is not served by our module
-    //         //
-    //         goto error;
-    //     }
+    if (skb->protocol == htons(ETH_P_IP)) {
+        //
+        // Extract the IP Header
+        // Note, we cannot use the Ethernet header->next protocol field
+        // as the Ethernet header would not be available in the OUT path
+        //
+        ip_header = ip_hdr(skb);
+        if (ip_header->protocol == IPPROTO_UDP) {
+            //
+            // Extract the UDP header and the fields required for UDP filtering
+            //
+            udp_header = udp_hdr(skb);
+            packet->ip_next_proto = IPPROTO_UDP;
+            packet->udp.src_port = udp_header->source;
+            packet->udp.dest_port = udp_header->dest;
+        }
+        else if (ip_header->protocol == IPPROTO_TCP) {
+            //
+            // Extract the TCP header and the fields required for TCP filtering
+            //
+            tcp_header = tcp_hdr(skb);
+            packet->ip_next_proto = IPPROTO_TCP;
+            packet->tcp.src_port = tcp_header->source;
+            packet->tcp.dest_port = tcp_header->dest;
+        }
+        else {
+            //
+            // This type of packet is not served by our module
+            //
+            goto error;
+        }
 
-    //  //    printk(KERN_INFO "Mac src: %x %x %x %x %x %x\n", eth_header->h_source[0], eth_header->h_source[1], eth_header->h_source[2], 
-    //  //        eth_header->h_source[3], eth_header->h_source[4], eth_header->h_source[5]);
+        if (direction == dir_IN) {
+            memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
+            memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
+        }
 
-    //  //    printk(KERN_INFO "Mac dest: %x %x %x %x %x %x\n", eth_header->h_dest[0], eth_header->h_dest[1], eth_header->h_dest[2], 
-    //  //        eth_header->h_dest[3], eth_header->h_dest[4], eth_header->h_dest[5]);
-
-    //  //    memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
-    //  //    memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
-    
-    // 	// printk(KERN_INFO "Copying the ip addresses\n");
-    //  //    packet->src_ip_address = ip_header->saddr;
-    //  //    packet->dest_ip_address = ip_header->daddr;
-    // }
-    // else {
-    //     //
-    //     // This type of packet is not served by our module
-    //     //
-    //     goto error;
-    // }
+    	packet->src_ip_address = ip_header->saddr;
+        packet->dest_ip_address = ip_header->daddr;
+    }
+    else {
+        //
+        // This type of packet is not served by our module
+        //
+        goto error;
+    }
 
     printk(KERN_INFO "%p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
     
@@ -249,36 +256,36 @@ unsigned int hook_func_outgoing(
     unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
 
-//     printk(KERN_INFO "%d\n", out->type);
-//     //
-//     // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
-//     //
-//     if (rules_out == NULL) {
-//         goto end;
-//     }
+    //
+    // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
+    //
+    if (rules_out == NULL) {
+        goto end;
+    }
 
-//     packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
-//     if (packet == NULL) {
-//         printk(KERN_INFO "Error in memory allocation\n");
-//         goto end;
-//     }
-//     //
-//     // Parse the sk_buff structure and retrieve all fields that we need to take a look at
-//     //
-//     if (skbuff_to_packet(out, skb, packet) == -1) {
-//         //
-//         // A return value of -1 indicates that it is not one of the packets we parse
-//         //
-//         decision = NF_ACCEPT;
-//         goto end;
-//     }
+    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    if (packet == NULL) {
+        printk(KERN_INFO "Error in memory allocation\n");
+        goto end;
+    }
+    //
+    // Parse the sk_buff structure and retrieve all fields that we need to take a look at
+    //
+    if (skbuff_to_packet(dir_OUT, out, skb, packet) == -1) {
+        //
+        // A return value of -1 indicates that it is not one of the packets we parse
+        //
+        decision = NF_ACCEPT;
+        goto end;
+    }
 
-// //    decision = apply_filters_to_packet(rules_out, packet);
+   decision = apply_filters_to_packet(rules_out, packet);
+   printk("Outgoing: Decision for %p: %u", (void *)skb, decision);
 
-// end:
+end:
 
-    if (out->type == ARPHRD_ETHER)
-        printk(KERN_INFO "outgoing: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
+    // if (out->type == ARPHRD_ETHER)
+    //     printk(KERN_INFO "outgoing: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
     
     if (packet != NULL) {
         kfree(packet);
@@ -296,33 +303,33 @@ unsigned int hook_func_incoming(
     unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
 
-    // printk(KERN_INFO "%d\n", out->type);
-    // //
-    // // Fastpath: if there are no incoming rules, nothing to do; act as pass through
-    // //
-    // if (rules_in == NULL) {
-    //     decision = NF_ACCEPT;
-    //     goto end;
-    // }
+    //
+    // Fastpath: if there are no incoming rules, nothing to do; act as pass through
+    //
+    if (rules_in == NULL) {
+        decision = NF_ACCEPT;
+        goto end;
+    }
 
-    // packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
-    // //
-    // // Parse the sk_buff structure and retrieve all fields that we need to take a look at
-    // //
-    // if (skbuff_to_packet(in, skb, packet) == -1) {
-    //     //
-    //     // A return value of -1 indicates that it is not one of the packets we parse
-    //     //
-    //     decision = NF_ACCEPT;
-    //     goto end;
-    // }
+    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    //
+    // Parse the sk_buff structure and retrieve all fields that we need to take a look at
+    //
+    if (skbuff_to_packet(dir_IN, in, skb, packet) == -1) {
+        //
+        // A return value of -1 indicates that it is not one of the packets we parse
+        //
+        decision = NF_ACCEPT;
+        goto end;
+    }
 
-//    decision = apply_filters_to_packet(rules_in, packet);
+   decision = apply_filters_to_packet(rules_in, packet);
+   printk("incoming: Decision for %p: %u", (void *)skb, decision);
 
-//end:
+end:
 
-    if (in->type == ARPHRD_ETHER)
-        printk(KERN_INFO "incoming: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
+    // if (in->type == ARPHRD_ETHER)
+    //     printk(KERN_INFO "incoming: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
     
     if (packet != NULL) {
         kfree(packet);
@@ -661,6 +668,15 @@ add_to_rule:
         // valid MAC address of the form AA:BB:CC:DD:EE:FF in hexadecimal notation
         //
         printk(KERN_INFO "Matched Mac.");
+        //
+        // Ethernet header cannot be accessed in the outgoing path
+        // So, we don't allow ethernet header rules for outgoing packets
+        //
+        if (new_rule->dir != dir_IN) {
+            printk(KERN_INFO "Mac addresses cannot be matched for outgoing packets.");
+            goto error;
+        }
+
         new_rule->eth.type |= type; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
         if ((nbytes = get_mac_address(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             printk(KERN_INFO "Failed mac address extraction.");
