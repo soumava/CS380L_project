@@ -34,7 +34,9 @@ int are_mac_addresses_equal(BYTE *addr1, BYTE *addr2){
 }
 
 int are_ip_addresses_equal( BYTE *addr1, uint32_t addr2){
-    BYTE *addr2_byte =  (BYTE *)addr2;
+    BYTE *addr2_byte =  (BYTE *)&addr2;
+    printk( KERN_INFO ": %x %x %x %x, %x %x %x %x\n", addr1[0],addr1[1],addr1[2],
+    addr1[3],addr2_byte[0],addr2_byte[1],addr2_byte[2],addr2_byte[3]);
     int i = 0 ; 
     while ( i < ip_num_bytes){
         if( addr1[i] != addr2_byte[i]){
@@ -142,7 +144,7 @@ unsigned int apply_filters_to_packet(
     //
 
     int decision = NF_ACCEPT; 
-    
+
     while( list != NULL){
         decision = apply_single_rule_to_packet(list,packet);
         if( decision == NF_DROP){
@@ -162,7 +164,7 @@ int skbuff_to_packet(
     struct sk_buff* skb,
     struct packet* packet) 
 {
-    struct ethhdr* eth_header = eth_hdr(skb);
+    struct ethhdr* eth_header; 
     struct iphdr* ip_header;
     struct udphdr* udp_header;
     struct tcphdr* tcp_header;
@@ -172,10 +174,11 @@ int skbuff_to_packet(
     if (device->type != ARPHRD_ETHER) {
         goto error;
     }
+    eth_header = eth_hdr(skb);
+    
 
     if (eth_header->h_proto == ETH_P_IP) {
         ip_header = ip_hdr(skb);
-    
         if (ip_header->protocol == IPPROTO_UDP) {
             udp_header = udp_hdr(skb);
             packet->ip_next_proto = IPPROTO_UDP;
@@ -183,6 +186,7 @@ int skbuff_to_packet(
             packet->udp.dest_port = udp_header->dest;
         }
         else if (ip_header->protocol == IPPROTO_TCP) {
+            udp_header = udp_hdr(skb);
             tcp_header = tcp_hdr(skb);
             packet->ip_next_proto = IPPROTO_TCP;
             packet->tcp.src_port = tcp_header->source;
@@ -198,6 +202,7 @@ int skbuff_to_packet(
         memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
         memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
     
+    	printk(KERN_INFO "Copying the ip addresses\n");
         packet->src_ip_address = ip_header->saddr;
         packet->dest_ip_address = ip_header->daddr;
     }
@@ -221,9 +226,10 @@ unsigned int hook_func_outgoing(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-//    printk(KERN_INFO "%d\n", out->type);
     unsigned int decision;
     struct packet* packet = NULL;
+
+    printk(KERN_INFO "%d\n", out->type);
     //
     // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
     //
@@ -233,11 +239,16 @@ unsigned int hook_func_outgoing(
     }
 
     packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    if( packet == NULL ){
+        printk(KERN_INFO "Error in memory allocation\n");
+        goto end;
+    }
     //
     // Parse the sk_buff structure and retrieve all fields that we need to take a look at
     //
-	//TODO: Should this be in or out? 
-    if (skbuff_to_packet(in, skb, packet) == -1) {
+    //TODO: Should this be in or out? 
+    //
+    if (skbuff_to_packet(out, skb, packet) == -1) {
         //
         // A return value of -1 indicates that it is not one of the packets we parse
         //
@@ -245,14 +256,14 @@ unsigned int hook_func_outgoing(
         goto end;
     }
 
-    decision = apply_filters_to_packet(rules_in, packet);
+    decision = apply_filters_to_packet(rules_out, packet);
 
 end:
     if (packet != NULL) {
         kfree(packet);
     }
+    //printk(KERN_INFO "Decision is %d\n", decision);
     return decision;
-    return NF_ACCEPT;        
 }
 
 unsigned int hook_func_incoming(
@@ -262,7 +273,6 @@ unsigned int hook_func_incoming(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-    // printk(KERN_INFO "%d\n", in->type);
     unsigned int decision;
     struct packet* packet = NULL;
     //
@@ -291,6 +301,7 @@ end:
     if (packet != NULL) {
         kfree(packet);
     }
+
     return decision;
 }
 
