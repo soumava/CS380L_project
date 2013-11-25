@@ -69,7 +69,7 @@ struct rule {
         BYTE dest_protocol;
     	int src;
 		int dest;
-	} net;
+	} trans;
 
     struct rule* next;
 };

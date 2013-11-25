@@ -23,7 +23,10 @@ struct rule* rules_out = NULL;
 //
 module_param(filter, charp, 0);
 
-int are_mac_addresses_equal(BYTE *addr1, BYTE *addr2){
+int are_mac_addresses_equal(
+    const BYTE *addr1, 
+    const BYTE *addr2)
+{
     int i = 0 ; 
     while ( i < eth_num_bytes){
         if( addr1[i] != addr2[i])
@@ -33,9 +36,17 @@ int are_mac_addresses_equal(BYTE *addr1, BYTE *addr2){
     return 1;
 }
 
-int are_ip_addresses_equal( BYTE *addr1, uint32_t addr2){
-    BYTE *addr2_byte =  (BYTE *)addr2;
+int are_ip_addresses_equal( 
+    const BYTE *addr1, 
+    const uint32_t addr2)
+{
     int i = 0 ; 
+    BYTE *addr2_byte =  (BYTE *)&addr2;
+    
+    printk( KERN_INFO ": %x %x %x %x, %x %x %x %x\n", 
+        addr1[0], addr1[1], addr1[2], addr1[3],
+        addr2_byte[0], addr2_byte[1], addr2_byte[2], addr2_byte[3]);
+    
     while ( i < ip_num_bytes){
         if( addr1[i] != addr2_byte[i]){
             return 0;
@@ -46,7 +57,10 @@ int are_ip_addresses_equal( BYTE *addr1, uint32_t addr2){
 }
 
 
-int are_net_addresses_equal( int addr1, uint16_t addr2){
+int are_trans_addresses_equal( 
+    const int addr1, 
+    const uint16_t addr2)
+{
     if( addr1 != addr2){
         return 0;
     }
@@ -57,77 +71,81 @@ int are_net_addresses_equal( int addr1, uint16_t addr2){
 // This method will return NF_DROP only if the rule applies to this packet and the action is DROP.
 // Otherwise, return NF_ACCEPT
 
-unsigned int apply_single_rule_to_packet(const struct rule *rule , const struct packet *packet){
+unsigned int apply_single_rule_to_packet(
+    const struct rule* rule , 
+    const struct packet* packet)
+{
     unsigned int decision = NF_ACCEPT;
 
-    BYTE *rule_mac_address ;
-    BYTE *packet_mac_address;
-    BYTE *rule_ip_address;
-    uint32_t packet_ip_address;
-    int rule_net_address; 
-    uint16_t packet_net_address ;
-
-    switch( rule -> type ){
-        case type_MAC:
-            rule_mac_address = rule->eth.src; 
-            packet_mac_address = packet-> src_mac_address; 
-
-            if( rule -> fld == fld_DEST ){
-                rule_mac_address = rule->eth.dest;
-                packet_mac_address = packet->dest_mac_address;
-            }
-
-            if( are_mac_addresses_equal( rule_mac_address, packet_mac_address )){
-                if(rule -> action == act_DROP){
-                    decision = NF_DROP;
-                }
-            }
-            break;
-        case type_IP:
-            rule_ip_address = rule->ip.src; 
-            packet_ip_address = packet->src_ip_address; 
-            if( rule -> fld == fld_DEST ){
-                rule_ip_address = rule->ip.dest;
-                packet_ip_address = packet->dest_ip_address;
-            }
-            if( are_ip_addresses_equal(rule_ip_address,packet_ip_address ) ){
-                if( rule -> action == act_DROP){
-                    decision = NF_DROP;
-                }
-            }
-            break;
-        case type_TCP:
-            if( packet->ip_next_proto == IPPROTO_TCP ){
-                rule_net_address = rule->net.src; 
-                packet_net_address = packet->tcp.src_port; 
-                if( rule -> fld == fld_DEST ){
-                    rule_net_address = rule->net.dest;
-                    packet_net_address = packet->tcp.dest_port;
-                }
-                if( are_net_addresses_equal(rule_net_address,packet_net_address ) ){
-                    if( rule -> action == act_DROP){
-                        decision = NF_DROP;
-                    }
-                }
-            }
-            break;
-        case type_UDP:
-            if( packet->ip_next_proto == IPPROTO_UDP ){
-                int rule_net_address = rule->net.src; 
-                uint16_t packet_net_address = packet->udp.src_port; 
-                if( rule -> fld == fld_DEST ){
-                    rule_net_address = rule->net.dest;
-                    packet_net_address = packet->udp.dest_port;
-                }
-                if( are_net_addresses_equal(rule_net_address,packet_net_address ) ){
-                    if( rule -> action == act_DROP){
-                        decision = NF_DROP;
-                    }
-                }
-            }
-            break;
+    if (rule->eth.type & fld_SRC) {
+        //
+        // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
+        //
+        if (!are_mac_addresses_equal(rule->eth.src, packet->src_mac_address)) {
+            goto finished;
+        }
     }
 
+    if (rule->eth.type & fld_DEST) {
+        //
+        // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
+        //
+        if (!are_mac_addresses_equal(rule->eth.dest, packet->dest_mac_address)) {
+            goto finished;
+        }
+    }
+
+    if (rule->ip.type & fld_SRC) {
+        //
+        // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
+        //
+        if (!are_ip_addresses_equal(rule->ip.src, packet->src_ip_address)) {
+            goto finished;
+        }        
+    }
+
+    if (rule->ip.type & fld_DEST) {
+        //
+        // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
+        //
+        if (!are_ip_addresses_equal(rule->ip.dest, packet->dest_ip_address)) {
+            goto finished;
+        }        
+    }
+
+    if (packet->ip_next_proto == rule->trans.src_protocol) {
+        //
+        // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
+        //
+        if (!are_trans_addresses_equal(rule->trans.src, packet->tcp.src_port)) {
+            goto finished;
+        }   
+    }
+    else if (rule->trans.src_protocol != 0) {
+        //
+        // Rule is mentioned but protocol doesn't match
+        //
+        goto finished;
+    }
+
+    if (packet->ip_next_proto == rule->trans.dest_protocol) {
+        //
+        // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
+        //
+        if (!are_trans_addresses_equal(rule->trans.dest, packet->tcp.dest_port)) {
+            goto finished;
+        }   
+    }
+    else if (rule->trans.dest_protocol != 0) {
+        //
+        // Rule is mentioned but protocol doesn't match
+        //
+        goto finished;
+    }
+
+    decision = (rule->action == act_DROP) ? NF_DROP : NF_ACCEPT;
+
+finished:
     return decision;
 }
 
@@ -135,22 +153,20 @@ unsigned int apply_filters_to_packet(
     const struct rule* list,
     const struct packet* packet)
 {
+    int decision = NF_ACCEPT; 
     //
     // If there are two conflicting rules, NF_DROP will take
     // precedence. 
     //
-
-    int decision = NF_ACCEPT; 
-    
     while( list != NULL){
         decision = apply_single_rule_to_packet(list,packet);
         if( decision == NF_DROP){
-            goto finish;
+            goto finished;
         }
         list = list->next;
     }
 
-finish:
+finished:
     return decision;
 }    
 
@@ -160,10 +176,11 @@ int skbuff_to_packet(
     struct sk_buff* skb,
     struct packet* packet) 
 {
-    struct ethhdr* eth_header = eth_hdr(skb);
-    struct iphdr* ip_header;
-    struct udphdr* udp_header;
-    struct tcphdr* tcp_header;
+    struct ethhdr* eth_header = NULL; 
+    struct iphdr* ip_header = NULL;
+    struct udphdr* udp_header = NULL;
+    struct tcphdr* tcp_header = NULL;
+    //BYTE* temp;
     //
     // Check if this is an ethernet device that sent the packet
     //
@@ -171,20 +188,21 @@ int skbuff_to_packet(
         goto error;
     }
 
+    eth_header = eth_hdr(skb);
+    
     if (eth_header->h_proto == ETH_P_IP) {
         ip_header = ip_hdr(skb);
-    
         if (ip_header->protocol == IPPROTO_UDP) {
             udp_header = udp_hdr(skb);
-            packet->ip_next_proto = IPPROTO_UDP;
-            packet->udp.src_port = udp_header->source;
-            packet->udp.dest_port = udp_header->dest;
+//            packet->ip_next_proto = IPPROTO_UDP;
+//            packet->udp.src_port = udp_header->source;
+//            packet->udp.dest_port = udp_header->dest;
         }
         else if (ip_header->protocol == IPPROTO_TCP) {
             tcp_header = tcp_hdr(skb);
-            packet->ip_next_proto = IPPROTO_TCP;
-            packet->tcp.src_port = tcp_header->source;
-            packet->tcp.dest_port = tcp_header->dest;
+//            packet->ip_next_proto = IPPROTO_TCP;
+//            packet->tcp.src_port = tcp_header->source;
+//            packet->tcp.dest_port = tcp_header->dest;
         }
         else {
             //
@@ -192,12 +210,19 @@ int skbuff_to_packet(
             //
             goto error;
         }
+
+//        printk(KERN_INFO "Mac src: %x %x %x %x %x %x\n", eth_header->h_source[0], eth_header->h_source[1], eth_header->h_source[2], 
+//            eth_header->h_source[3], eth_header->h_source[4], eth_header->h_source[5]);
+
+//        printk(KERN_INFO "Mac dest: %x %x %x %x %x %x\n", eth_header->h_dest[0], eth_header->h_dest[1], eth_header->h_dest[2], 
+//            eth_header->h_dest[3], eth_header->h_dest[4], eth_header->h_dest[5]);
+
+//        memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
+//        memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
     
-        memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
-        memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
-    
-        packet->src_ip_address = ip_header->saddr;
-        packet->dest_ip_address = ip_header->daddr;
+    	printk(KERN_INFO "Copying the ip addresses\n");
+//        packet->src_ip_address = ip_header->saddr;
+//        packet->dest_ip_address = ip_header->daddr;
     }
     else {
         //
@@ -206,6 +231,8 @@ int skbuff_to_packet(
         goto error;
     }
 
+    printk(KERN_INFO "%p %d %p %d %p %d %p %p %d\n", (void *)skb, skb->end, (void *)eth_header, skb->mac_header, (void *)ip_header, skb->network_header, (void *)tcp_header, (void *)udp_header, skb->transport_header);
+    
     return 0;
 
 error:
@@ -219,17 +246,22 @@ unsigned int hook_func_outgoing(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-    unsigned int decision;
+    unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
+
+    printk(KERN_INFO "%d\n", out->type);
     //
     // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
     //
     if (rules_out == NULL) {
-        decision = NF_ACCEPT;
         goto end;
     }
 
     packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    if (packet == NULL) {
+        printk(KERN_INFO "Error in memory allocation\n");
+        goto end;
+    }
     //
     // Parse the sk_buff structure and retrieve all fields that we need to take a look at
     //
@@ -248,7 +280,6 @@ end:
         kfree(packet);
     }
     return decision;
-    return NF_ACCEPT;        
 }
 
 unsigned int hook_func_incoming(
@@ -258,8 +289,10 @@ unsigned int hook_func_incoming(
     const struct net_device *out,
     int (*okfn)(struct sk_buff *))
 {
-    unsigned int decision;
+    unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
+
+    printk(KERN_INFO "%d\n", out->type);
     //
     // Fastpath: if there are no incoming rules, nothing to do; act as pass through
     //
@@ -304,21 +337,28 @@ BYTE get_dec_from_hex(const BYTE c)
         return -1;
 }
 
-
+//
+// Reads the port number associated with a tcp or udp rule
+// Returns the number of characters read or -1 in case of an error
+//
 int get_port(
+    BYTE field,
     const char* rule_str,
     const int rule_len,
     struct rule* rule) 
 {
-    int index = 0, port = 0, expt = 1;
-    const char delimiter = '|';
+    int index = 0, port = 0, expt = 1, ret;
+    const char rule_delimiter = '|', delimiter = ',';
 
-    while (rule_str[index] != '\0' && rule_str[index] != delimiter) {
+    while (rule_str[index] != '\0' && rule_str[index] != rule_delimiter
+        && rule_str[index] != ' '  && rule_str[index] != delimiter) {
         if (rule_str[index] < 48 || rule_str[index] > 57) {
             goto error;
         }
         index++;
     }
+
+    ret = index;
 
     if (index == 0) {
         goto error;
@@ -326,25 +366,29 @@ int get_port(
 
     while (index > 0) {
         index--;
-        port += rule_str[index] * expt;
+        port += (rule_str[index] - 48) * expt;
         expt *= 10;
     }
 
-    if (rule->fld == fld_SRC) {
-        rule->net.src = port;
+    if (field == fld_SRC) {
+        rule->trans.src = port;
     }
     else {
-        rule->net.dest = port;
+        rule->trans.dest = port;
     }
 
-return 0;
+return ret;
 
 error:
     return -1;    
 }
 
-
+//
+// Reads a mac address associated with a mac rule
+// Returns the number of characters read or -1 in case of an error
+//
 int get_mac_address(
+    BYTE field,
     const char* rule_str, 
     const int rule_len,
     struct rule* rule) 
@@ -379,20 +423,25 @@ int get_mac_address(
         mac_address[byte_index++] = num_dec_1 * 16 + num_dec_2;
     }
 
-    if (rule->fld == fld_SRC) {
+    if (field == fld_SRC) {
         memcpy(rule->eth.src, mac_address, eth_num_bytes);
     }
     else {
         memcpy(rule->eth.dest, mac_address, eth_num_bytes);
     }
     
-    return 0;
+    return index;
 
 error:
     return -1;    
 }
 
+//
+// Reads an ip address in the form of aaa.bbb.ccc.ddd 
+// Returns the number of characters read or -1 in case of error
+//
 int get_ip_address(
+    BYTE field,
     const char* rule_str,
     const int rule_len,
     struct rule* rule) 
@@ -429,14 +478,14 @@ int get_ip_address(
         ip_address[byte_index++] = num_dec_1 * 100 + num_dec_2 * 10 + num_dec_3;
     }
 
-    if (rule->fld == fld_SRC) {
+    if (field == fld_SRC) {
         memcpy(rule->ip.src, ip_address, ip_num_bytes);
     }
     else {
         memcpy(rule->ip.dest, ip_address, ip_num_bytes);
     }
 
-    return 0;
+    return index;
 
 error:
     return -1;
@@ -445,15 +494,19 @@ error:
 //#ifdef DBG
 void print_rule(struct rule* rule) 
 {
-    printk(KERN_INFO "Type: %x\n", rule->type & 0xFF);
     printk(KERN_INFO "Action: %x\n", rule->action & 0xFF);
-    printk(KERN_INFO "Field: %x\n", rule->fld & 0xFF);
     printk(KERN_INFO "Direction: %x\n", rule->dir & 0xFF);
-    printk(KERN_INFO "Bytes 00-03: %x %x %x %x\n", rule->eth.src[0], rule->eth.src[1], rule->eth.src[2], rule->eth.src[3]);
-    printk(KERN_INFO "Bytes 04-07: %x %x %x %x\n", rule->eth.src[4], rule->eth.src[5], rule->eth.dest[0], rule->eth.dest[1]);
-    printk(KERN_INFO "Bytes 08-11: %x %x %x %x\n", rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
-}
-//#endif
+    printk(KERN_INFO "Eth flag: %d\n", rule->eth.type);
+    printk(KERN_INFO "Eth src: %x %x %x %x %x %x\n", rule->eth.src[0], rule->eth.src[1], rule->eth.src[2], rule->eth.src[3], rule->eth.src[4], rule->eth.src[5]);
+    printk(KERN_INFO "Eth dest: %x %x %x %x %x %x\n", rule->eth.dest[0], rule->eth.dest[1], rule->eth.dest[2], rule->eth.dest[3], rule->eth.dest[4], rule->eth.dest[5]);
+    printk(KERN_INFO "IP flag: %d\n", rule->ip.type);
+    printk(KERN_INFO "IP src: %x %x %x %x\n", rule->ip.src[0], rule->ip.src[1], rule->ip.src[2], rule->ip.src[3]);
+    printk(KERN_INFO "IP dest: %x %x %x %x\n", rule->ip.dest[0], rule->ip.dest[1], rule->ip.dest[2], rule->ip.dest[3]);
+    printk(KERN_INFO "Trans src proto: %d\n", rule->trans.src_protocol);
+    printk(KERN_INFO "Trans dest proto: %d\n", rule->trans.dest_protocol);
+    printk(KERN_INFO "Trans src: %d \n", rule->trans.src);
+    printk(KERN_INFO "Trans dest: %d\n\n", rule->trans.dest);
+}//#endif
 
 void add_rule_to_list(
     struct rule** list,
@@ -517,14 +570,15 @@ int create_rule(
     const char* rule_str,
     const int rule_size) 
 {
-    const char* temp_rule_str = rule_str;
-    int temp_rule_len = rule_size;
+    const char* temp_rule_str = rule_str, comma = ',';
+    int temp_rule_len = rule_size, nbytes, type;
 
     struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_KERNEL);
     if (new_rule == NULL) {
         printk(KERN_INFO "Failed to allocate memory for rule.");
         goto error;
     }
+    memset(new_rule, 0, sizeof(struct rule));
     
     if (temp_rule_len > lstr_DROP && strncasecmp(temp_rule_str, str_DROP, lstr_DROP) == 0) {
         //
@@ -569,45 +623,52 @@ int create_rule(
         goto error;
     }
 
+    //
+    // In case of composite rules, the code will keep looping
+    // to this label as long as there are more sections to the rule
+    //
+add_to_rule:
     if (strncasecmp(temp_rule_str, str_SRC, lstr_SRC) == 0) {
         //
         // Rule value should be matched with the source address
         //
         printk(KERN_INFO "Matched Src.");
-        new_rule->fld = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
+        type = fld_SRC; temp_rule_str += lstr_SRC; temp_rule_len -= lstr_SRC;
     }
     else if (strncasecmp(temp_rule_str, str_DEST, lstr_DEST) == 0) {
         //
         // Rule value should be matched with the destination address
         //
         printk(KERN_INFO "Matched Dest.");
-        new_rule->fld = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
+        type = fld_DEST; temp_rule_str += lstr_DEST; temp_rule_len -= lstr_DEST;
     }
     else {
         goto error;
     }
 
-    if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0) {
+    if (temp_rule_len > lstr_MAC && strncasecmp(temp_rule_str, str_MAC, lstr_MAC) == 0
+        && (new_rule->eth.type & type) == 0) {
         //
         // This rule applies to the Ethernet address, what follows should be a 
         // valid MAC address of the form AA:BB:CC:DD:EE:FF in hexadecimal notation
         //
         printk(KERN_INFO "Matched Mac.");
-        new_rule->type = type_MAC; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
-        if (get_mac_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
+        new_rule->eth.type |= type; temp_rule_str += lstr_MAC; temp_rule_len -= lstr_MAC;
+        if ((nbytes = get_mac_address(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             printk(KERN_INFO "Failed mac address extraction.");
             goto error; 
         }
     }
-    else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0) {
+    else if (temp_rule_len > lstr_IP && strncasecmp(temp_rule_str, str_IP, lstr_IP) == 0
+        && (new_rule->ip.type & type) == 0) {
         //
         // This rule applies to the IP address, what follows should be a 
         // valid IPv4 address of the form AAA:BBB:CCC:DDD in decimal notation
         // TODO: Currently all 3 digits need to be specified, should remove this requirement
         //
         printk(KERN_INFO "Matched Ip.");
-        new_rule->type = type_IP; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
-        if (get_ip_address(temp_rule_str, temp_rule_len, new_rule) != 0) {
+        new_rule->ip.type |= type; temp_rule_str += lstr_IP; temp_rule_len -= lstr_IP;
+        if ((nbytes = get_ip_address(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             printk(KERN_INFO "Failed ip address extraction.");
             goto error;
         }
@@ -618,8 +679,31 @@ int create_rule(
         // valid port number in decimal notation
         //
         printk(KERN_INFO "Matched Tcp.");
-        new_rule->type = type_TCP; temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
-        if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
+        //
+        // This rule should not overwrite a previously set rule
+        //
+        if ((type == fld_SRC && new_rule->trans.src_protocol != 0) ||
+            (type == fld_DEST && new_rule->trans.dest_protocol != 0)) {
+            goto error;
+        }
+        //
+        // The rule should not mention TCP port for one field and UDP port for the other
+        //
+        if (type == fld_SRC) {
+            if (new_rule->trans.dest_protocol == 0 || new_rule->trans.dest_protocol == IPPROTO_TCP) 
+                new_rule->trans.src_protocol = IPPROTO_TCP;
+            else 
+                goto error;
+        }
+        else {
+            if (new_rule->trans.src_protocol == 0 || new_rule->trans.src_protocol == IPPROTO_TCP) 
+                new_rule->trans.dest_protocol = IPPROTO_TCP;
+            else
+                goto error;
+        }
+
+        temp_rule_str += lstr_TCP; temp_rule_len -= lstr_TCP;
+        if ((nbytes = get_port(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             printk(KERN_INFO "Failed port extraction.");
             goto error;
         }
@@ -630,8 +714,31 @@ int create_rule(
         // valid port number in decimal notation
         //
         printk(KERN_INFO "Matched Udp.");
-        new_rule->type = type_UDP; temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
-        if (get_port(temp_rule_str, temp_rule_len, new_rule) != 0) {
+        //
+        // This rule should not overwrite a previously set rule
+        //
+        if ((type == fld_SRC && new_rule->trans.src_protocol != 0) ||
+            (type == fld_DEST && new_rule->trans.dest_protocol != 0)) {
+            goto error;
+        }
+        //
+        // The rule should not mention TCP port for one field and UDP port for the other
+        //
+        if (type == fld_SRC) {
+            if (new_rule->trans.dest_protocol == 0 || new_rule->trans.dest_protocol == IPPROTO_UDP) 
+                new_rule->trans.src_protocol = IPPROTO_UDP;
+            else 
+                goto error;
+        }
+        else {
+            if (new_rule->trans.src_protocol == 0 || new_rule->trans.src_protocol == IPPROTO_UDP) 
+                new_rule->trans.dest_protocol = IPPROTO_UDP;
+            else
+                goto error;
+        }
+
+        temp_rule_str += lstr_UDP; temp_rule_len -= lstr_UDP;
+        if ((nbytes = get_port(type, temp_rule_str, temp_rule_len, new_rule)) == -1) {
             printk(KERN_INFO "Failed port extraction.");
             goto error;
         }
@@ -640,7 +747,24 @@ int create_rule(
         printk(KERN_INFO "Match failed.");
         goto error;
     }
-    
+
+    temp_rule_len -= nbytes;
+    temp_rule_str += nbytes;
+    type = 0;
+    //
+    // Check if there is anything left of the rule string, if there 
+    // is then go ahead and parse it again for more fields
+    //
+    if (temp_rule_len != 0) {
+        if (temp_rule_str[0] == comma) {
+            temp_rule_str++;
+            temp_rule_len--;
+            goto add_to_rule;
+        }
+        else 
+            goto error;
+    }
+
 //#ifdef DBG
     //
     // Dump out the rule just in case
@@ -654,6 +778,8 @@ int create_rule(
     return 0;
 
 error:
+    printk("Rule: %s %d\n", temp_rule_str, temp_rule_len);
+    print_rule(new_rule);
     if (new_rule != NULL) {
         kfree(new_rule);
     }
