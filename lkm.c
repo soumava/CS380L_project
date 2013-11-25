@@ -57,7 +57,7 @@ int are_net_addresses_equal( int addr1, uint16_t addr2){
 // This method will return NF_DROP only if the rule applies to this packet and the action is DROP.
 // Otherwise, return NF_ACCEPT
 
-unsigned int apply_rule_to_packet(const struct rule *rule , const struct packet *packet){
+unsigned int apply_single_rule_to_packet(const struct rule *rule , const struct packet *packet){
     unsigned int decision = NF_ACCEPT;
 
     BYTE *rule_mac_address ;
@@ -95,9 +95,7 @@ unsigned int apply_rule_to_packet(const struct rule *rule , const struct packet 
                     decision = NF_DROP;
                 }
             }
-
             break;
-
         case type_TCP:
             if( packet->ip_next_proto == IPPROTO_TCP ){
                 rule_net_address = rule->net.src; 
@@ -126,11 +124,8 @@ unsigned int apply_rule_to_packet(const struct rule *rule , const struct packet 
                         decision = NF_DROP;
                     }
                 }
-
             }
-
             break;
-
     }
 
     return decision;
@@ -149,7 +144,7 @@ unsigned int apply_filters_to_packet(
     int decision = NF_ACCEPT; 
     
     while( list != NULL){
-        decision = apply_rule_to_packet(list,packet);
+        decision = apply_single_rule_to_packet(list,packet);
         if( decision == NF_DROP){
             goto finish;
         }
