@@ -176,10 +176,10 @@ int skbuff_to_packet(
     struct sk_buff* skb,
     struct packet* packet) 
 {
-    struct ethhdr* eth_header = NULL; 
-    struct iphdr* ip_header = NULL;
-    struct udphdr* udp_header = NULL;
-    struct tcphdr* tcp_header = NULL;
+    // struct ethhdr* eth_header = NULL; 
+    // struct iphdr* ip_header = NULL;
+    // struct udphdr* udp_header = NULL;
+    // struct tcphdr* tcp_header = NULL;
     //BYTE* temp;
     //
     // Check if this is an ethernet device that sent the packet
@@ -188,50 +188,50 @@ int skbuff_to_packet(
         goto error;
     }
 
-    eth_header = eth_hdr(skb);
+    // eth_header = eth_hdr(skb);
     
-    if (eth_header->h_proto == ETH_P_IP) {
-        ip_header = ip_hdr(skb);
-        if (ip_header->protocol == IPPROTO_UDP) {
-            udp_header = udp_hdr(skb);
-//            packet->ip_next_proto = IPPROTO_UDP;
-//            packet->udp.src_port = udp_header->source;
-//            packet->udp.dest_port = udp_header->dest;
-        }
-        else if (ip_header->protocol == IPPROTO_TCP) {
-            tcp_header = tcp_hdr(skb);
-//            packet->ip_next_proto = IPPROTO_TCP;
-//            packet->tcp.src_port = tcp_header->source;
-//            packet->tcp.dest_port = tcp_header->dest;
-        }
-        else {
-            //
-            // This type of packet is not served by our module
-            //
-            goto error;
-        }
+    // if (eth_header->h_proto == ETH_P_IP) {
+    //     ip_header = ip_hdr(skb);
+    //     if (ip_header->protocol == IPPROTO_UDP) {
+    //         udp_header = udp_hdr(skb);
+    //         // packet->ip_next_proto = IPPROTO_UDP;
+    //         // packet->udp.src_port = udp_header->source;
+    //         // packet->udp.dest_port = udp_header->dest;
+    //     }
+    //     else if (ip_header->protocol == IPPROTO_TCP) {
+    //         tcp_header = tcp_hdr(skb);
+    //         // packet->ip_next_proto = IPPROTO_TCP;
+    //         // packet->tcp.src_port = tcp_header->source;
+    //         // packet->tcp.dest_port = tcp_header->dest;
+    //     }
+    //     else {
+    //         //
+    //         // This type of packet is not served by our module
+    //         //
+    //         goto error;
+    //     }
 
-//        printk(KERN_INFO "Mac src: %x %x %x %x %x %x\n", eth_header->h_source[0], eth_header->h_source[1], eth_header->h_source[2], 
-//            eth_header->h_source[3], eth_header->h_source[4], eth_header->h_source[5]);
+    //  //    printk(KERN_INFO "Mac src: %x %x %x %x %x %x\n", eth_header->h_source[0], eth_header->h_source[1], eth_header->h_source[2], 
+    //  //        eth_header->h_source[3], eth_header->h_source[4], eth_header->h_source[5]);
 
-//        printk(KERN_INFO "Mac dest: %x %x %x %x %x %x\n", eth_header->h_dest[0], eth_header->h_dest[1], eth_header->h_dest[2], 
-//            eth_header->h_dest[3], eth_header->h_dest[4], eth_header->h_dest[5]);
+    //  //    printk(KERN_INFO "Mac dest: %x %x %x %x %x %x\n", eth_header->h_dest[0], eth_header->h_dest[1], eth_header->h_dest[2], 
+    //  //        eth_header->h_dest[3], eth_header->h_dest[4], eth_header->h_dest[5]);
 
-//        memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
-//        memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
+    //  //    memcpy(packet->src_mac_address, eth_header->h_dest, eth_num_bytes);
+    //  //    memcpy(packet->dest_mac_address, eth_header->h_source, eth_num_bytes);
     
-    	printk(KERN_INFO "Copying the ip addresses\n");
-//        packet->src_ip_address = ip_header->saddr;
-//        packet->dest_ip_address = ip_header->daddr;
-    }
-    else {
-        //
-        // This type of packet is not served by our module
-        //
-        goto error;
-    }
+    // 	// printk(KERN_INFO "Copying the ip addresses\n");
+    //  //    packet->src_ip_address = ip_header->saddr;
+    //  //    packet->dest_ip_address = ip_header->daddr;
+    // }
+    // else {
+    //     //
+    //     // This type of packet is not served by our module
+    //     //
+    //     goto error;
+    // }
 
-    printk(KERN_INFO "%p %d %p %d %p %d %p %p %d\n", (void *)skb, skb->end, (void *)eth_header, skb->mac_header, (void *)ip_header, skb->network_header, (void *)tcp_header, (void *)udp_header, skb->transport_header);
+    printk(KERN_INFO "%p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
     
     return 0;
 
@@ -249,33 +249,37 @@ unsigned int hook_func_outgoing(
     unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
 
-    printk(KERN_INFO "%d\n", out->type);
-    //
-    // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
-    //
-    if (rules_out == NULL) {
-        goto end;
-    }
+//     printk(KERN_INFO "%d\n", out->type);
+//     //
+//     // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
+//     //
+//     if (rules_out == NULL) {
+//         goto end;
+//     }
 
-    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
-    if (packet == NULL) {
-        printk(KERN_INFO "Error in memory allocation\n");
-        goto end;
-    }
-    //
-    // Parse the sk_buff structure and retrieve all fields that we need to take a look at
-    //
-    if (skbuff_to_packet(out, skb, packet) == -1) {
-        //
-        // A return value of -1 indicates that it is not one of the packets we parse
-        //
-        decision = NF_ACCEPT;
-        goto end;
-    }
+//     packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+//     if (packet == NULL) {
+//         printk(KERN_INFO "Error in memory allocation\n");
+//         goto end;
+//     }
+//     //
+//     // Parse the sk_buff structure and retrieve all fields that we need to take a look at
+//     //
+//     if (skbuff_to_packet(out, skb, packet) == -1) {
+//         //
+//         // A return value of -1 indicates that it is not one of the packets we parse
+//         //
+//         decision = NF_ACCEPT;
+//         goto end;
+//     }
 
-    decision = apply_filters_to_packet(rules_out, packet);
+// //    decision = apply_filters_to_packet(rules_out, packet);
 
-end:
+// end:
+
+    if (out->type == ARPHRD_ETHER)
+        printk(KERN_INFO "outgoing: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
+    
     if (packet != NULL) {
         kfree(packet);
     }
@@ -292,30 +296,34 @@ unsigned int hook_func_incoming(
     unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
 
-    printk(KERN_INFO "%d\n", out->type);
-    //
-    // Fastpath: if there are no incoming rules, nothing to do; act as pass through
-    //
-    if (rules_in == NULL) {
-        decision = NF_ACCEPT;
-        goto end;
-    }
+    // printk(KERN_INFO "%d\n", out->type);
+    // //
+    // // Fastpath: if there are no incoming rules, nothing to do; act as pass through
+    // //
+    // if (rules_in == NULL) {
+    //     decision = NF_ACCEPT;
+    //     goto end;
+    // }
 
-    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
-    //
-    // Parse the sk_buff structure and retrieve all fields that we need to take a look at
-    //
-    if (skbuff_to_packet(in, skb, packet) == -1) {
-        //
-        // A return value of -1 indicates that it is not one of the packets we parse
-        //
-        decision = NF_ACCEPT;
-        goto end;
-    }
+    // packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    // //
+    // // Parse the sk_buff structure and retrieve all fields that we need to take a look at
+    // //
+    // if (skbuff_to_packet(in, skb, packet) == -1) {
+    //     //
+    //     // A return value of -1 indicates that it is not one of the packets we parse
+    //     //
+    //     decision = NF_ACCEPT;
+    //     goto end;
+    // }
 
-    decision = apply_filters_to_packet(rules_in, packet);
+//    decision = apply_filters_to_packet(rules_in, packet);
 
-end:
+//end:
+
+    if (in->type == ARPHRD_ETHER)
+        printk(KERN_INFO "incoming: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
+    
     if (packet != NULL) {
         kfree(packet);
     }
@@ -859,7 +867,7 @@ int init_module(void)
     nf_outgoing_hook.hook = hook_func_outgoing;
     nf_outgoing_hook.hooknum = NF_INET_POST_ROUTING;
     nf_outgoing_hook.pf = PF_INET;
-    nf_outgoing_hook.priority = NF_IP_PRI_FIRST;
+    nf_outgoing_hook.priority = NF_IP_PRI_LAST;
     nf_register_hook(&nf_outgoing_hook);
     //
     // Register the hook for incoming packets
