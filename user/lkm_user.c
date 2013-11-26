@@ -53,7 +53,7 @@ void main(int argc, char** argv) {
     ret = read(fd, file_contents, file_stat.st_size);
     BAIL_ON_ERROR(ret, -1);
 
-    printf("Copied file contents: %s\n", file_contents);
+    printf("Copied file contents: %s", file_contents);
 
     for (i = 0; i < file_stat.st_size; i++) {
         if (file_contents[i] != ' ' && file_contents[i] != '\n' && file_contents[i] != '\r') {

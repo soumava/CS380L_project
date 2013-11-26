@@ -1,3 +1,4 @@
+#include <linux/spinlock.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/netfilter_ipv4.h>
@@ -15,8 +16,11 @@ MODULE_LICENSE("GPL");
 struct nf_hook_ops nf_incoming_hook;
 struct nf_hook_ops nf_outgoing_hook;
 char *filter;
+
 struct rule* rules_in = NULL;
+rwlock_t rules_in_lock;
 struct rule* rules_out = NULL;
+rwlock_t rules_out_lock;
 //
 // Most important - this is what binds the configuration string to
 // the parameter 'filter'
@@ -28,8 +32,8 @@ int are_mac_addresses_equal(
     const BYTE *addr2)
 {
     int i = 0 ; 
-    while ( i < eth_num_bytes){
-        if( addr1[i] != addr2[i])
+    while (i < eth_num_bytes) {
+        if (addr1[i] != addr2[i])
             return 0;
         i++;
     }
@@ -43,12 +47,12 @@ int are_ip_addresses_equal(
     int i = 0 ; 
     BYTE *addr2_byte =  (BYTE *)&addr2;
     
-    // printk( KERN_INFO ": %x %x %x %x, %x %x %x %x\n", 
-    //     addr1[0], addr1[1], addr1[2], addr1[3],
-    //     addr2_byte[0], addr2_byte[1], addr2_byte[2], addr2_byte[3]);
+    printk( KERN_INFO "%x %x %x %x, %x %x %x %x\n", 
+        addr1[0], addr1[1], addr1[2], addr1[3],
+        addr2_byte[0], addr2_byte[1], addr2_byte[2], addr2_byte[3]);
     
-    while ( i < ip_num_bytes){
-        if( addr1[i] != addr2_byte[i]){
+    while (i < ip_num_bytes) {
+        if (addr1[i] != addr2_byte[i]) {
             return 0;
         }
         i++;
@@ -61,7 +65,7 @@ int are_trans_addresses_equal(
     const int addr1, 
     const uint16_t addr2)
 {
-    if( addr1 != addr2){
+    if (addr1 != addr2){
         return 0;
     }
     return 1;
@@ -82,6 +86,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_mac_addresses_equal(rule->eth.src, packet->src_mac_address)) {
+            printk(KERN_INFO "Eth Src match failed.");
             goto finished;
         }
     }
@@ -91,6 +96,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_mac_addresses_equal(rule->eth.dest, packet->dest_mac_address)) {
+            printk(KERN_INFO "Eth Dest match failed.");
             goto finished;
         }
     }
@@ -100,6 +106,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_ip_addresses_equal(rule->ip.src, packet->src_ip_address)) {
+            printk(KERN_INFO "IP Src match failed.");            
             goto finished;
         }        
     }
@@ -109,6 +116,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_ip_addresses_equal(rule->ip.dest, packet->dest_ip_address)) {
+            printk(KERN_INFO "IP Dest match failed.");
             goto finished;
         }        
     }
@@ -118,6 +126,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_trans_addresses_equal(rule->trans.src, packet->tcp.src_port)) {
+            printk(KERN_INFO "Trans Src match failed.");
             goto finished;
         }   
     }
@@ -125,6 +134,7 @@ unsigned int apply_single_rule_to_packet(
         //
         // Rule is mentioned but protocol doesn't match
         //
+        printk(KERN_INFO "Trans proto match failed.");
         goto finished;
     }
 
@@ -133,6 +143,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_trans_addresses_equal(rule->trans.dest, packet->tcp.dest_port)) {
+            printk(KERN_INFO "Trans Dest match failed.");
             goto finished;
         }   
     }
@@ -140,10 +151,12 @@ unsigned int apply_single_rule_to_packet(
         //
         // Rule is mentioned but protocol doesn't match
         //
+        printk(KERN_INFO "Trans proto match failed.");  
         goto finished;
     }
 
     decision = (rule->action == act_DROP) ? NF_DROP : NF_ACCEPT;
+    printk(KERN_INFO "Decision: %d", decision);
 
 finished:
     return decision;
@@ -158,9 +171,9 @@ unsigned int apply_filters_to_packet(
     // If there are two conflicting rules, NF_DROP will take
     // precedence. 
     //
-    while( list != NULL){
-        decision = apply_single_rule_to_packet(list,packet);
-        if( decision == NF_DROP){
+    while (list != NULL) {
+        decision = apply_single_rule_to_packet(list, packet);
+        if (decision == NF_DROP) {
             goto finished;
         }
         list = list->next;
@@ -190,14 +203,18 @@ int skbuff_to_packet(
 
     if (direction == dir_IN)
         eth_header = eth_hdr(skb);
+
+    printk(KERN_INFO "%p %p %d %d %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, 
+        skb->network_header, skb->transport_header, htons(skb->protocol), ETH_P_IP);
     
-    if (skb->protocol == htons(ETH_P_IP)) {
+    if (htons(skb->protocol) == ETH_P_IP) {
         //
         // Extract the IP Header
         // Note, we cannot use the Ethernet header->next protocol field
         // as the Ethernet header would not be available in the OUT path
         //
         ip_header = ip_hdr(skb);
+        printk(KERN_INFO "IP next protocol: %d TCP: %d UDP: %d\n", ip_header->protocol, IPPROTO_TCP, IPPROTO_UDP);
         if (ip_header->protocol == IPPROTO_UDP) {
             //
             // Extract the UDP header and the fields required for UDP filtering
@@ -206,6 +223,7 @@ int skbuff_to_packet(
             packet->ip_next_proto = IPPROTO_UDP;
             packet->udp.src_port = udp_header->source;
             packet->udp.dest_port = udp_header->dest;
+            printk(KERN_INFO "UDP: Src: %d Dest: %d\n", udp_header->source, udp_header->dest);
         }
         else if (ip_header->protocol == IPPROTO_TCP) {
             //
@@ -215,6 +233,7 @@ int skbuff_to_packet(
             packet->ip_next_proto = IPPROTO_TCP;
             packet->tcp.src_port = tcp_header->source;
             packet->tcp.dest_port = tcp_header->dest;
+            printk(KERN_INFO "TCP: Src: %d Dest: %d\n", tcp_header->source, tcp_header->dest);
         }
         else {
             //
@@ -238,8 +257,6 @@ int skbuff_to_packet(
         goto error;
     }
 
-    printk(KERN_INFO "%p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
-    
     return 0;
 
 error:
@@ -279,14 +296,13 @@ unsigned int hook_func_outgoing(
         goto end;
     }
 
-   decision = apply_filters_to_packet(rules_out, packet);
-   printk("Outgoing: Decision for %p: %u", (void *)skb, decision);
+    read_lock(&rules_out_lock);
+    decision = apply_filters_to_packet(rules_out, packet);
+    read_lock(&rules_out_lock);
+    printk("Outgoing: Decision for %p: %u", (void *)skb, decision);
 
 end:
 
-    // if (out->type == ARPHRD_ETHER)
-    //     printk(KERN_INFO "outgoing: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
-    
     if (packet != NULL) {
         kfree(packet);
     }
@@ -323,14 +339,13 @@ unsigned int hook_func_incoming(
         goto end;
     }
 
-   decision = apply_filters_to_packet(rules_in, packet);
-   printk("incoming: Decision for %p: %u", (void *)skb, decision);
+    read_lock(&rules_in_lock);
+    decision = apply_filters_to_packet(rules_in, packet);
+    read_unlock(&rules_in_lock);
+    printk("incoming: Decision for %p: %u", (void *)skb, decision);
 
 end:
 
-    // if (in->type == ARPHRD_ETHER)
-    //     printk(KERN_INFO "incoming: %p %p %d %d %d %d\n", (void *)skb, (void *)skb->head, skb->end, skb->mac_header, skb->network_header, skb->transport_header);
-    
     if (packet != NULL) {
         kfree(packet);
     }
@@ -884,6 +899,8 @@ int init_module(void)
     nf_outgoing_hook.hooknum = NF_INET_POST_ROUTING;
     nf_outgoing_hook.pf = PF_INET;
     nf_outgoing_hook.priority = NF_IP_PRI_LAST;
+
+    rwlock_init(&rules_in_lock);
     nf_register_hook(&nf_outgoing_hook);
     //
     // Register the hook for incoming packets
@@ -892,6 +909,8 @@ int init_module(void)
     nf_incoming_hook.hooknum = NF_INET_PRE_ROUTING;
     nf_incoming_hook.pf = PF_INET;
     nf_incoming_hook.priority = NF_IP_PRI_FIRST;
+
+    rwlock_init(&rules_out_lock);
     nf_register_hook(&nf_incoming_hook);
     
     printk(KERN_INFO "Simple firewall loaded.");
@@ -901,13 +920,19 @@ int init_module(void)
 
 void cleanup_module(void) 
 {
-    // UN-register the hook with netfilter
+    // Unregister the hook with netfilter
     nf_unregister_hook(&nf_incoming_hook);
     nf_unregister_hook(&nf_outgoing_hook);
     //
     // Delete the allocated memory
     //
+    write_lock(&rules_in_lock);
     cleanup_rule_list(rules_in);
+    write_unlock(&rules_in_lock);
+    
+    write_lock(&rules_out_lock);
     cleanup_rule_list(rules_out);
+    write_unlock(&rules_out_lock);
+    
     printk(KERN_INFO "Simple firewall unloaded\n");
 }
