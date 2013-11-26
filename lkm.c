@@ -298,7 +298,7 @@ unsigned int hook_func_outgoing(
 
     read_lock(&rules_out_lock);
     decision = apply_filters_to_packet(rules_out, packet);
-    read_lock(&rules_out_lock);
+    read_unlock(&rules_out_lock);
     printk("Outgoing: Decision for %p: %u", (void *)skb, decision);
 
 end:
