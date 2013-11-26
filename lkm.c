@@ -86,7 +86,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_mac_addresses_equal(rule->eth.src, packet->src_mac_address)) {
-            printk(KERN_INFO "Eth Src match failed.");
+            printk(KERN_INFO "Eth Src match failed.\n");
             goto finished;
         }
     }
@@ -96,7 +96,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_mac_addresses_equal(rule->eth.dest, packet->dest_mac_address)) {
-            printk(KERN_INFO "Eth Dest match failed.");
+            printk(KERN_INFO "Eth Dest match failed.\n");
             goto finished;
         }
     }
@@ -106,7 +106,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_ip_addresses_equal(rule->ip.src, packet->src_ip_address)) {
-            printk(KERN_INFO "IP Src match failed.");            
+            printk(KERN_INFO "IP Src match failed.\n");            
             goto finished;
         }        
     }
@@ -116,7 +116,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_ip_addresses_equal(rule->ip.dest, packet->dest_ip_address)) {
-            printk(KERN_INFO "IP Dest match failed.");
+            printk(KERN_INFO "IP Dest match failed.\n");
             goto finished;
         }        
     }
@@ -126,7 +126,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_trans_addresses_equal(rule->trans.src, packet->tcp.src_port)) {
-            printk(KERN_INFO "Trans Src match failed.");
+            printk(KERN_INFO "Trans Src match failed.\n");
             goto finished;
         }   
     }
@@ -134,7 +134,7 @@ unsigned int apply_single_rule_to_packet(
         //
         // Rule is mentioned but protocol doesn't match
         //
-        printk(KERN_INFO "Trans proto match failed.");
+        printk(KERN_INFO "Trans proto match failed.\n");
         goto finished;
     }
 
@@ -143,7 +143,7 @@ unsigned int apply_single_rule_to_packet(
         // No need to bother if the address doesn't match, the rest of the rule doesn't matter now
         //
         if (!are_trans_addresses_equal(rule->trans.dest, packet->tcp.dest_port)) {
-            printk(KERN_INFO "Trans Dest match failed.");
+            printk(KERN_INFO "Trans Dest match failed.\n");
             goto finished;
         }   
     }
@@ -151,12 +151,12 @@ unsigned int apply_single_rule_to_packet(
         //
         // Rule is mentioned but protocol doesn't match
         //
-        printk(KERN_INFO "Trans proto match failed.");  
+        printk(KERN_INFO "Trans proto match failed.\n");  
         goto finished;
     }
 
     decision = (rule->action == act_DROP) ? NF_DROP : NF_ACCEPT;
-    printk(KERN_INFO "Decision: %d", decision);
+    printk(KERN_INFO "Decision: %d\n", decision);
 
 finished:
     return decision;
@@ -219,21 +219,23 @@ int skbuff_to_packet(
             //
             // Extract the UDP header and the fields required for UDP filtering
             //
-            udp_header = udp_hdr(skb);
+            //udp_header = udp_hdr(skb);
+            udp_header = (struct udphdr*) ((__u32 *) ip_header + ip_header->ihl);
             packet->ip_next_proto = IPPROTO_UDP;
-            packet->udp.src_port = udp_header->source;
-            packet->udp.dest_port = udp_header->dest;
-            printk(KERN_INFO "UDP: Src: %d Dest: %d\n", udp_header->source, udp_header->dest);
+            packet->udp.src_port = ntohs(udp_header->source);
+            packet->udp.dest_port = ntohs(udp_header->dest);
+            printk(KERN_INFO "UDP: Src: %d Dest: %d\n", packet->udp.src_port, packet->udp.dest_port);
         }
         else if (ip_header->protocol == IPPROTO_TCP) {
             //
             // Extract the TCP header and the fields required for TCP filtering
             //
-            tcp_header = tcp_hdr(skb);
+            //tcp_header = tcp_hdr(skb);
+            tcp_header = (struct tcphdr*) ((__u32 *) ip_header + ip_header->ihl);
             packet->ip_next_proto = IPPROTO_TCP;
-            packet->tcp.src_port = tcp_header->source;
-            packet->tcp.dest_port = tcp_header->dest;
-            printk(KERN_INFO "TCP: Src: %d Dest: %d\n", tcp_header->source, tcp_header->dest);
+            packet->tcp.src_port = ntohs(tcp_header->source);
+            packet->tcp.dest_port = ntohs(tcp_header->dest);
+            printk(KERN_INFO "TCP: Src: %d Dest: %d\n", packet->tcp.src_port, packet->tcp.dest_port);
         }
         else {
             //
@@ -272,6 +274,7 @@ unsigned int hook_func_outgoing(
 {
     unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
+    unsigned long flags;
 
     //
     // Fastpath: if there are no outgoing rules, nothing to do; act as pass through
@@ -280,7 +283,7 @@ unsigned int hook_func_outgoing(
         goto end;
     }
 
-    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_ATOMIC);
     if (packet == NULL) {
         printk(KERN_INFO "Error in memory allocation\n");
         goto end;
@@ -296,9 +299,9 @@ unsigned int hook_func_outgoing(
         goto end;
     }
 
-    read_lock(&rules_out_lock);
+    read_lock_irqsave(&rules_out_lock, flags);
     decision = apply_filters_to_packet(rules_out, packet);
-    read_unlock(&rules_out_lock);
+    read_unlock_irqrestore(&rules_out_lock, flags);
     printk("Outgoing: Decision for %p: %u", (void *)skb, decision);
 
 end:
@@ -318,6 +321,7 @@ unsigned int hook_func_incoming(
 {
     unsigned int decision = NF_ACCEPT;
     struct packet* packet = NULL;
+    unsigned long flags;
 
     //
     // Fastpath: if there are no incoming rules, nothing to do; act as pass through
@@ -327,7 +331,11 @@ unsigned int hook_func_incoming(
         goto end;
     }
 
-    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_KERNEL);
+    packet = (struct packet*)kmalloc(sizeof(struct packet), GFP_ATOMIC);
+    if (packet == NULL) {
+        printk(KERN_INFO "Error in memory allocation\n");
+        goto end;
+    }
     //
     // Parse the sk_buff structure and retrieve all fields that we need to take a look at
     //
@@ -339,10 +347,10 @@ unsigned int hook_func_incoming(
         goto end;
     }
 
-    read_lock(&rules_in_lock);
+    read_lock_irqsave(&rules_in_lock, flags);
     decision = apply_filters_to_packet(rules_in, packet);
-    read_unlock(&rules_in_lock);
-    printk("incoming: Decision for %p: %u", (void *)skb, decision);
+    read_unlock_irqrestore(&rules_in_lock, flags);
+    printk("Incoming: Decision for %p: %u", (void *)skb, decision);
 
 end:
 
@@ -589,9 +597,15 @@ void add_rule_to_lists(
         // If it is needed to add to the other list
         // To avoid double free and make things simpler, copying to another structure
         //
-        struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_KERNEL);
-        memcpy(new_rule, rule, sizeof(struct rule));
-        add_rule_to_list(other_list, new_rule);
+        struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_ATOMIC);
+        if (new_rule == NULL) {
+            printk("Error in allocating memory while cloning rule. Inout rule wont be available in %s list.", 
+                (other_list == &rules_in) ? "IN" : "OUT");
+        }
+        else {
+            memcpy(new_rule, rule, sizeof(struct rule));
+            add_rule_to_list(other_list, new_rule);
+        }
     }
 }
 
@@ -603,7 +617,7 @@ int create_rule(
     const char* temp_rule_str = rule_str, comma = ',';
     int temp_rule_len = rule_size, nbytes, type;
 
-    struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_KERNEL);
+    struct rule* new_rule = (struct rule*)kmalloc(sizeof(struct rule), GFP_ATOMIC);
     if (new_rule == NULL) {
         printk(KERN_INFO "Failed to allocate memory for rule.");
         goto error;
@@ -647,7 +661,7 @@ int create_rule(
         // Rule to be applied on both incoming and outgoing packets
         //
         printk(KERN_INFO "Matched Inout.");
-        new_rule->dir = dir_INOUT; temp_rule_str += lstr_INOUT; temp_rule_len -= lstr_OUT;
+        new_rule->dir = dir_INOUT; temp_rule_str += lstr_INOUT; temp_rule_len -= lstr_INOUT;
     }
     else {
         goto error;
@@ -787,6 +801,7 @@ add_to_rule:
         goto error;
     }
 
+    printk(KERN_INFO "nbytes: %d Rule_left: %s Rule_len: %d\n", nbytes, temp_rule_str, temp_rule_len);
     temp_rule_len -= nbytes;
     temp_rule_str += nbytes;
     type = 0;
@@ -849,6 +864,7 @@ int parse_filter_rules(void)
             // All characters from current_rule to here are part of a rule
             //
             current_size = &filter[index] - current_rule;
+            printk(KERN_INFO "Rule_Size: %d\n", current_size);
             if (0 != create_rule(current_rule, current_size)) {
                 printk(KERN_INFO "Failed to create rule at: %s %d\n.", current_rule, current_size);
                 return -1;
@@ -898,9 +914,9 @@ int init_module(void)
     nf_outgoing_hook.hook = hook_func_outgoing;
     nf_outgoing_hook.hooknum = NF_INET_POST_ROUTING;
     nf_outgoing_hook.pf = PF_INET;
-    nf_outgoing_hook.priority = NF_IP_PRI_LAST;
+    nf_outgoing_hook.priority = NF_IP_PRI_FIRST;
 
-    rwlock_init(&rules_in_lock);
+    rwlock_init(&rules_out_lock);
     nf_register_hook(&nf_outgoing_hook);
     //
     // Register the hook for incoming packets
@@ -910,7 +926,7 @@ int init_module(void)
     nf_incoming_hook.pf = PF_INET;
     nf_incoming_hook.priority = NF_IP_PRI_FIRST;
 
-    rwlock_init(&rules_out_lock);
+    rwlock_init(&rules_in_lock);
     nf_register_hook(&nf_incoming_hook);
     
     printk(KERN_INFO "Simple firewall loaded.");
@@ -920,19 +936,20 @@ int init_module(void)
 
 void cleanup_module(void) 
 {
+    unsigned long flags;
     // Unregister the hook with netfilter
     nf_unregister_hook(&nf_incoming_hook);
     nf_unregister_hook(&nf_outgoing_hook);
     //
     // Delete the allocated memory
     //
-    write_lock(&rules_in_lock);
+    write_lock_irqsave(&rules_in_lock, flags);
     cleanup_rule_list(rules_in);
-    write_unlock(&rules_in_lock);
+    write_unlock_irqrestore(&rules_in_lock, flags);
     
-    write_lock(&rules_out_lock);
+    write_lock_irqsave(&rules_out_lock, flags);
     cleanup_rule_list(rules_out);
-    write_unlock(&rules_out_lock);
+    write_unlock_irqrestore(&rules_out_lock, flags);
     
     printk(KERN_INFO "Simple firewall unloaded\n");
 }
